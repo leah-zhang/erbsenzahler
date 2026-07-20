@@ -2,11 +2,30 @@ import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 
 import { formatCurrency } from '../utils/currency';
+import { escapeHtml, renderTransactionGroups } from '../utils/chartTooltip';
 
-export function SpendTrendChart({ monthlyBreakdown }) {
+function renderTooltip(params) {
+  const point = Array.isArray(params) ? params[0] : params;
+  const week = point?.data;
+
+  if (!week) {
+    return '';
+  }
+
+  return (
+    `<div class="chart-tooltip">
+      <div class="chart-tooltip-heading">
+        <span>${escapeHtml(week.label)}</span>
+        <strong>${formatCurrency(week.total)}</strong>
+      </div>
+      ${renderTransactionGroups(week.merchant_groups)}
+    </div>`
+  );
+}
+
+export function SpendTrendChart({ weeklyBreakdown }) {
   const option = useMemo(() => {
-    const months = monthlyBreakdown || [];
-    const zoomStart = Math.max(0, 100 - (8 / Math.max(months.length, 1)) * 100);
+    const weeks = weeklyBreakdown || [];
 
     return {
       animationDuration: 420,
@@ -14,7 +33,7 @@ export function SpendTrendChart({ monthlyBreakdown }) {
       grid: {
         top: 24,
         right: 22,
-        bottom: months.length > 8 ? 88 : 54,
+        bottom: 54,
         left: 72,
       },
       tooltip: {
@@ -22,17 +41,20 @@ export function SpendTrendChart({ monthlyBreakdown }) {
         axisPointer: {
           type: 'shadow',
         },
+        appendToBody: true,
+        confine: true,
         backgroundColor: '#172026',
         borderWidth: 0,
+        extraCssText: 'max-width: min(520px, calc(100vw - 32px)); white-space: normal;',
         textStyle: {
           color: '#ffffff',
           fontFamily: 'Inter, system-ui, sans-serif',
         },
-        valueFormatter: (value) => formatCurrency(value),
+        formatter: renderTooltip,
       },
       xAxis: {
         type: 'category',
-        data: months.map((entry) => entry.month),
+        data: weeks.map((entry) => entry.label),
         axisTick: {
           alignWithLabel: true,
         },
@@ -40,7 +62,7 @@ export function SpendTrendChart({ monthlyBreakdown }) {
           color: '#34444b',
           fontWeight: 800,
           interval: 0,
-          rotate: months.length > 8 ? 35 : 0,
+          rotate: weeks.length > 8 ? 35 : 0,
         },
         axisLine: {
           lineStyle: {
@@ -60,36 +82,14 @@ export function SpendTrendChart({ monthlyBreakdown }) {
           },
         },
       },
-      dataZoom: [
-        {
-          type: 'inside',
-          start: zoomStart,
-          end: 100,
-          minValueSpan: 1,
-        },
-        {
-          type: 'slider',
-          start: zoomStart,
-          end: 100,
-          minValueSpan: 1,
-          height: 24,
-          bottom: 18,
-          borderColor: 'rgba(23, 32, 38, 0.12)',
-          fillerColor: 'rgba(95, 166, 142, 0.24)',
-          handleStyle: {
-            color: '#5fa68e',
-          },
-          textStyle: {
-            color: '#68767a',
-            fontWeight: 800,
-          },
-        },
-      ],
       series: [
         {
           name: 'Spend',
           type: 'bar',
-          data: months.map((entry) => entry.total),
+          data: weeks.map((entry) => ({
+            ...entry,
+            value: entry.total,
+          })),
           barMaxWidth: 58,
           itemStyle: {
             borderRadius: [6, 6, 0, 0],
@@ -104,7 +104,7 @@ export function SpendTrendChart({ monthlyBreakdown }) {
         },
       ],
     };
-  }, [monthlyBreakdown]);
+  }, [weeklyBreakdown]);
 
   return (
     <ReactECharts

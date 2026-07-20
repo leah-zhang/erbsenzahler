@@ -61,6 +61,18 @@ def _trim_location_tokens(tokens: list[str], has_store_number: bool) -> list[str
 
 def merchant_key(description: str) -> str:
     uppercase_description = description.upper()
+    compact_description = re.sub(r"[^A-Z0-9]+", "", uppercase_description)
+    if re.search(r"\bAMAZON\.CA\*[A-Z0-9]+", uppercase_description):
+        return "AMAZON"
+    if re.search(r"\bAMZN\s+MKTP\s+CA\*[A-Z0-9]+", uppercase_description):
+        return "AMAZON"
+    if re.search(r"\bAMAZON\s+[A-Z0-9]{6,}\b", uppercase_description):
+        return "AMAZON"
+    if re.search(r"\bPRESTO\b.*\bTORONTO,\s*ON\b", uppercase_description):
+        return "PRESTO"
+    if "SHOPPERSDRUGMART" in compact_description:
+        return "Shoppers drug mart"
+
     has_store_number = bool(re.search(r"#\s*\d+", uppercase_description))
     normalized = re.sub(r"#\s*\d+", " ", uppercase_description)
     normalized = re.sub(r"[^A-Z0-9 ]+", " ", normalized)
@@ -96,6 +108,10 @@ def build_merchant_groups(transactions: list[dict]) -> list[dict]:
                 "display_name": examples[0],
                 "count": len(items),
                 "examples": examples,
+                "merchants": sorted(
+                    {item["description"] for item in items},
+                    key=str.lower,
+                ),
             }
         )
 

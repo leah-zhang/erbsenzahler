@@ -8,8 +8,9 @@ from sqlmodel import Session
 from app.models import Statement, Transaction, engine
 from app.main import categorize_merchant, categorization_suggestions, clear_database, clear_transaction_categories
 from app.main import clear_transactions, rename_category
-from app.main import transaction_categories, transaction_category_summary, upload_statement
-from app.main import CategorizeMerchantRequest, RenameCategoryRequest
+from app.main import remove_merchant_from_category, transaction_categories, transaction_category_details
+from app.main import transaction_category_summary, upload_statement
+from app.main import CategorizeMerchantRequest, RemoveMerchantCategoryRequest, RenameCategoryRequest
 
 
 class UploadTests(unittest.IsolatedAsyncioTestCase):
@@ -157,6 +158,43 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
         renamed_categories = transaction_categories()
         self.assertIn("Cafe", renamed_categories.categories)
         self.assertNotIn("Coffee", renamed_categories.categories)
+
+    async def test_category_details_and_remove_merchant(self):
+        clear_database()
+        file = UploadFile(
+            filename="statement.csv",
+            file=BytesIO(
+                b"Date,Description,Amount\n"
+                b"2026-07-01,POS STARBUCKS 123,4.25\n"
+                b"2026-07-02,STARBUCKS 456,5.00\n"
+                b"2026-07-03,GROCERY MART,18.00\n"
+            ),
+        )
+        await upload_statement(file)
+
+        categorize_merchant(
+            CategorizeMerchantRequest(
+                merchant_key="STARBUCKS",
+                category="Coffee",
+                excluded_merchants=["STARBUCKS 456"],
+            )
+        )
+
+        details = transaction_category_details()
+        self.assertEqual(details.categories[0].name, "Coffee")
+        self.assertEqual(details.categories[0].merchant_groups[0].merchants, ["POS STARBUCKS 123"])
+        self.assertEqual(details.uncategorized_groups[0].merchant_key, "GROCERY MART")
+
+        response = remove_merchant_from_category(
+            RemoveMerchantCategoryRequest(
+                category="Coffee",
+                merchant="POS STARBUCKS 123",
+            )
+        )
+
+        self.assertEqual(response.status, "removed")
+        self.assertEqual(response.updated_transactions, 1)
+        self.assertEqual(transaction_categories().categories, [])
 
 
 if __name__ == "__main__":
