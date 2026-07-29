@@ -9,6 +9,15 @@ class Transaction(SQLModel, table=True):
     amount: float = Field(...)
     category: str = Field(default="uncategorized")
     account: str = Field(default="unknown")
+    fingerprint: str = Field(default="", index=True)
+
+
+class MerchantCategoryRule(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    merchant_key: str = Field(index=True, unique=True)
+    category: str = Field(index=True)
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
 
 
 class Statement(SQLModel, table=True):
@@ -48,6 +57,18 @@ def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         connection = session.connection()
+        transaction_columns = {row[1] for row in connection.exec_driver_sql('PRAGMA table_info("transaction")').all()}
+        if "fingerprint" not in transaction_columns:
+            connection.exec_driver_sql('ALTER TABLE "transaction" ADD COLUMN fingerprint TEXT DEFAULT ""')
+            rows = connection.exec_driver_sql('SELECT id, date, description, amount, account FROM "transaction"').all()
+            for row_id, transaction_date, description, amount, account in rows:
+                normalized_description = " ".join(str(description or "").strip().lower().split())
+                normalized_account = str(account or "unknown").strip().lower()
+                fingerprint = f"{transaction_date}|{normalized_description}|{float(amount or 0):.2f}|{normalized_account}"
+                connection.exec_driver_sql(
+                    'UPDATE "transaction" SET fingerprint = ? WHERE id = ?',
+                    (fingerprint, row_id),
+                )
         columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(accountvaluesnapshot)").all()}
         for column_name, column_type, default_value in [
             ("notes", "TEXT", "''"),

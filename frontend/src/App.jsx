@@ -30,12 +30,14 @@ const emptyAccountImportMapping = {
 };
 
 const categorizationPageSize = 10;
-const uncategorizedCategoryPageSize = 10;
+const uncategorizedCategoryPageSize = 20;
 const batchCategoryKey = '__batch_uncategorized__';
 
 function App() {
   const [activeTab, setActiveTab] = useState('analytics');
   const [status, setStatus] = useState('Ready to load statements');
+  const [analyticsTimeframeDays, setAnalyticsTimeframeDays] = useState(90);
+  const [analyticsCategory, setAnalyticsCategory] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [summary, setSummary] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -45,8 +47,14 @@ function App() {
   const [isClearingCategories, setIsClearingCategories] = useState(false);
   const [isAutomating, setIsAutomating] = useState(false);
   const [automationJobId, setAutomationJobId] = useState(null);
+  const [automationProfiles, setAutomationProfiles] = useState([]);
+  const [selectedAutomationAccounts, setSelectedAutomationAccounts] = useState({});
+  const [automationAccountStatuses, setAutomationAccountStatuses] = useState([]);
   const [csvPreview, setCsvPreview] = useState([]);
+  const [duplicateImportBatch, setDuplicateImportBatch] = useState(null);
+  const [duplicateRowsToKeep, setDuplicateRowsToKeep] = useState([]);
   const [hasHeader, setHasHeader] = useState(true);
+  const [amountSign, setAmountSign] = useState('spend_positive');
   const [columnMapping, setColumnMapping] = useState(emptyColumnMapping);
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [categorySummary, setCategorySummary] = useState([]);
@@ -70,7 +78,12 @@ function App() {
 
   const loadSummary = async () => {
     try {
-      const response = await api.get('/analytics/monthly');
+      const response = await api.get('/analytics/monthly', {
+        params: {
+          weekly_days: analyticsTimeframeDays,
+          weekly_category: analyticsCategory,
+        },
+      });
       setSummary(response.data);
     } catch (error) {
       setSummary(null);
@@ -78,12 +91,37 @@ function App() {
   };
 
   useEffect(() => {
-    loadSummary();
-    loadCategories();
-    loadCategorySummary();
-    loadCategoryDetails();
+    loadCategoryDashboard();
     loadAccountValues();
+    loadAutomationProfiles();
   }, []);
+
+  useEffect(() => {
+    loadSummary();
+  }, [analyticsTimeframeDays, analyticsCategory]);
+
+  useEffect(() => {
+    if (!automationJobId) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await api.get(`/statements/download/${automationJobId}`);
+        setAutomationAccountStatuses(response.data.accounts || []);
+        if (response.data.message) {
+          setStatus(response.data.message);
+        }
+        if (['completed', 'failed', 'not_found'].includes(response.data.status)) {
+          setAutomationJobId(null);
+        }
+      } catch (error) {
+        setAutomationJobId(null);
+      }
+    }, 2500);
+
+    return () => window.clearInterval(intervalId);
+  }, [automationJobId]);
 
   const normalizeAccountSnapshot = (snapshot) => ({
     id: snapshot.id,
@@ -127,6 +165,25 @@ function App() {
       setAccountValueRows((response.data.snapshots || []).map(normalizeAccountSnapshot));
     } catch (error) {
       setAccountValueRows([]);
+    }
+  };
+
+  const loadAutomationProfiles = async () => {
+    try {
+      const response = await api.get('/statements/download/profiles');
+      const banks = response.data.banks || [];
+      setAutomationProfiles(banks);
+      setSelectedAutomationAccounts((current) => {
+        if (Object.keys(current).length) {
+          return current;
+        }
+        return Object.fromEntries(
+          banks.map((bank) => [bank.id, (bank.accounts || []).map((account) => account.id)]),
+        );
+      });
+    } catch (error) {
+      setAutomationProfiles([]);
+      setSelectedAutomationAccounts({});
     }
   };
 
@@ -181,6 +238,43 @@ function App() {
     }
   };
 
+  const loadCategoryDashboard = async (page = uncategorizedCategoryPage) => {
+    try {
+      const offset = page * uncategorizedCategoryPageSize;
+      const response = await api.get('/transactions/category-dashboard', {
+        params: {
+          uncategorized_limit: uncategorizedCategoryPageSize,
+          uncategorized_offset: offset,
+        },
+      });
+      setCategoryOptions(response.data.categories || []);
+      setCategorySummary(response.data.category_summary || []);
+      setCategoryEdits(
+        Object.fromEntries((response.data.category_summary || []).map((category) => [category.name, category.name])),
+      );
+      setCategoryDetails({
+        categories: response.data.category_details || [],
+        uncategorized_groups: response.data.uncategorized_groups || [],
+        uncategorized_total: response.data.uncategorized_total || 0,
+        uncategorized_has_more: Boolean(response.data.uncategorized_has_more),
+      });
+      setUncategorizedCategoryPage(page);
+      setCategoryGroupExclusions({});
+    } catch (error) {
+      setCategoryOptions([]);
+      setCategorySummary([]);
+      setCategoryEdits({});
+      setCategoryDetails({
+        categories: [],
+        uncategorized_groups: [],
+        uncategorized_total: 0,
+        uncategorized_has_more: false,
+      });
+      setUncategorizedCategoryPage(0);
+      setCategoryGroupExclusions({});
+    }
+  };
+
   const loadCategorizationSuggestions = async (page = categorizationPage) => {
     try {
       const response = await api.get('/transactions/categorization-suggestions', {
@@ -219,6 +313,7 @@ function App() {
   const handleFileChange = async (file) => {
     setSelectedFile(file);
     setCsvPreview([]);
+    setAmountSign('spend_positive');
     setColumnMapping(emptyColumnMapping);
     setCategorizationGroups([]);
     setCategorizationPage(0);
@@ -226,6 +321,8 @@ function App() {
     setCategorizationHasMore(false);
     setCustomCategories({});
     setSelectedUncategorizedGroups([]);
+    setDuplicateImportBatch(null);
+    setDuplicateRowsToKeep([]);
 
     if (!file) {
       return;
@@ -260,6 +357,7 @@ function App() {
     const formData = new FormData();
     formData.append('file', selectedFile);
     formData.append('has_header', String(hasHeader));
+    formData.append('amount_sign', amountSign);
     formData.append(
       'column_mapping',
       JSON.stringify(
@@ -278,17 +376,71 @@ function App() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      setStatus(`Imported ${response.data.summary.rows} transactions from ${response.data.filename}.`);
+      const duplicateCount = response.data.summary.duplicate_rows || 0;
+      const importedCount = response.data.summary.imported ?? response.data.summary.rows;
+      setStatus(
+        duplicateCount
+          ? `Imported ${importedCount} transactions from ${response.data.filename}. Review ${duplicateCount} possible duplicates.`
+          : `Imported ${importedCount} transactions from ${response.data.filename}.`,
+      );
+      if (duplicateCount) {
+        setDuplicateImportBatch({
+          id: response.data.duplicate_batch_id,
+          rows: response.data.duplicates || [],
+        });
+        setDuplicateRowsToKeep([]);
+      } else {
+        setDuplicateImportBatch(null);
+        setDuplicateRowsToKeep([]);
+      }
       setSelectedFile(null);
       setCsvPreview([]);
       setCustomCategories({});
-      await loadCategorizationSuggestions(0);
-      await loadCategories();
-      await loadCategorySummary();
-      await loadCategoryDetails(0);
-      await loadSummary();
+      await Promise.all([
+        loadCategorizationSuggestions(0),
+        loadCategoryDashboard(0),
+        loadSummary(),
+      ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Upload failed. Make sure the backend is running and the CSV has Date, Description, and Amount columns.';
+      setStatus(detail);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleToggleDuplicateRow = (rowId) => {
+    setDuplicateRowsToKeep((current) => (
+      current.includes(rowId)
+        ? current.filter((selectedId) => selectedId !== rowId)
+        : [...current, rowId]
+    ));
+  };
+
+  const handleResolveDuplicateRows = async () => {
+    if (!duplicateImportBatch?.id) {
+      return;
+    }
+
+    setIsUploading(true);
+    setStatus('Resolving duplicate rows...');
+
+    try {
+      const response = await api.post(`/statements/upload/duplicates/${duplicateImportBatch.id}`, {
+        keep_duplicate_ids: duplicateRowsToKeep,
+      });
+      setStatus(
+        `Kept ${response.data.imported_duplicates} duplicate rows and discarded ${response.data.discarded_duplicates}.`,
+      );
+      setDuplicateImportBatch(null);
+      setDuplicateRowsToKeep([]);
+      await Promise.all([
+        loadCategorizationSuggestions(0),
+        loadCategoryDashboard(0),
+        loadSummary(),
+      ]);
+    } catch (error) {
+      const detail = error?.response?.data?.detail || 'Could not resolve duplicate rows. Try uploading the file again.';
       setStatus(detail);
     } finally {
       setIsUploading(false);
@@ -322,14 +474,19 @@ function App() {
         ...current,
         [merchantKey]: '',
       }));
+      setCategoryDetails((current) => ({
+        ...current,
+        uncategorized_groups: (current.uncategorized_groups || []).filter((group) => group.merchant_key !== merchantKey),
+        uncategorized_total: Math.max((current.uncategorized_total || 0) - 1, 0),
+      }));
+      setSelectedUncategorizedGroups((current) => current.filter((selectedKey) => selectedKey !== merchantKey));
       const nextPage = categorizationGroups.length <= 1 && categorizationPage > 0
         ? categorizationPage - 1
         : categorizationPage;
-      await loadCategorizationSuggestions(nextPage);
-      await loadCategories();
-      await loadCategorySummary();
-      await loadCategoryDetails(0);
-      await loadSummary();
+      await Promise.all([
+        loadCategorizationSuggestions(nextPage),
+        loadCategoryDashboard(0),
+      ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not apply the category. Make sure the backend is running.';
       setStatus(detail);
@@ -366,12 +523,18 @@ function App() {
         ...current,
         [batchCategoryKey]: '',
       }));
+      setCategoryDetails((current) => ({
+        ...current,
+        uncategorized_groups: (current.uncategorized_groups || []).filter(
+          (group) => !merchantKeys.includes(group.merchant_key),
+        ),
+        uncategorized_total: Math.max((current.uncategorized_total || 0) - merchantKeys.length, 0),
+      }));
       setSelectedUncategorizedGroups([]);
-      await loadCategorizationSuggestions(0);
-      await loadCategories();
-      await loadCategorySummary();
-      await loadCategoryDetails(0);
-      await loadSummary();
+      await Promise.all([
+        loadCategorizationSuggestions(0),
+        loadCategoryDashboard(0),
+      ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not apply the category. Make sure the backend is running.';
       setStatus(detail);
@@ -380,13 +543,43 @@ function App() {
     }
   };
 
+  const selectedAutomationPlan = () => (
+    automationProfiles
+      .map((bank) => ({
+        bank_id: bank.id,
+        account_ids: selectedAutomationAccounts[bank.id] || [],
+      }))
+      .filter((bank) => bank.account_ids.length)
+  );
+
+  const handleToggleAutomationAccount = (bankId, accountId) => {
+    setSelectedAutomationAccounts((current) => {
+      const selectedForBank = current[bankId] || [];
+      const nextSelectedForBank = selectedForBank.includes(accountId)
+        ? selectedForBank.filter((selectedAccountId) => selectedAccountId !== accountId)
+        : [...selectedForBank, accountId];
+
+      return {
+        ...current,
+        [bankId]: nextSelectedForBank,
+      };
+    });
+  };
+
   const handleAutomation = async () => {
+    const banks = selectedAutomationPlan();
+    if (!banks.length) {
+      setStatus('Select at least one account to download.');
+      return;
+    }
+
     setIsAutomating(true);
     setStatus('Starting browser automation...');
 
     try {
-      const response = await api.post('/statements/download');
+      const response = await api.post('/statements/download', { banks });
       setAutomationJobId(response.data.job_id || null);
+      setAutomationAccountStatuses(response.data.accounts || []);
       setStatus(response.data.message || 'Automation flow could not be started.');
     } catch (error) {
       const detail = error?.response?.data?.message || error?.message || 'Automation flow could not be started.';
@@ -408,7 +601,7 @@ function App() {
     try {
       const response = await api.post(`/statements/download/${automationJobId}/continue`);
       setStatus(response.data.message || 'Automation flow continued.');
-      setAutomationJobId(null);
+      setAutomationAccountStatuses(response.data.accounts || []);
     } catch (error) {
       const detail = error?.response?.data?.message || error?.message || 'Automation flow could not continue.';
       setStatus(detail);
@@ -483,9 +676,10 @@ function App() {
       setCategoryEdits({});
       setCategoryGroupExclusions({});
       setSelectedUncategorizedGroups([]);
-      await loadCategorizationSuggestions(0);
-      await loadCategoryDetails(0);
-      await loadSummary();
+      await Promise.all([
+        loadCategorizationSuggestions(0),
+        loadCategoryDashboard(0),
+      ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not clear categories. Make sure the backend is running.';
       setStatus(detail);
@@ -498,7 +692,7 @@ function App() {
     loadCategorizationSuggestions(nextPage);
   };
   const handleUncategorizedCategoryPageChange = (nextPage) => {
-    loadCategoryDetails(nextPage);
+    loadCategoryDashboard(nextPage);
   };
   const handleCategoryEditChange = (categoryName, nextName) => {
     setCategoryEdits((current) => ({
@@ -521,10 +715,10 @@ function App() {
         new_category: trimmedCategory,
       });
       setStatus(`Renamed ${response.data.updated_transactions} transactions to ${trimmedCategory}.`);
-      await loadCategories();
-      await loadCategorySummary();
-      await loadCategoryDetails();
-      await loadSummary();
+      await Promise.all([
+        loadCategoryDashboard(),
+        loadSummary(),
+      ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not rename the category. Make sure the backend is running.';
       setStatus(detail);
@@ -542,11 +736,10 @@ function App() {
         merchant,
       });
       setStatus(`Removed ${response.data.updated_transactions} transactions from ${category}.`);
-      await loadCategorizationSuggestions(0);
-      await loadCategories();
-      await loadCategorySummary();
-      await loadCategoryDetails();
-      await loadSummary();
+      await Promise.all([
+        loadCategorizationSuggestions(0),
+        loadCategoryDashboard(),
+      ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not remove the merchant. Make sure the backend is running.';
       setStatus(detail);
@@ -566,6 +759,19 @@ function App() {
         ? current.filter((selectedKey) => selectedKey !== merchantKey)
         : [...current, merchantKey]
     ));
+  };
+
+  const handleToggleVisibleUncategorizedGroups = (merchantKeys) => {
+    setSelectedUncategorizedGroups((current) => {
+      const visibleKeySet = new Set(merchantKeys);
+      const areAllVisibleSelected = merchantKeys.every((merchantKey) => current.includes(merchantKey));
+
+      if (areAllVisibleSelected) {
+        return current.filter((merchantKey) => !visibleKeySet.has(merchantKey));
+      }
+
+      return Array.from(new Set([...current, ...merchantKeys]));
+    });
   };
 
   const handleClearSelectedUncategorizedGroups = () => {
@@ -638,6 +844,136 @@ function App() {
       setAccountValueRows((current) => current.filter((row) => row.id !== rowId));
     } catch (error) {
       setStatus('Could not delete the account value row. Make sure the backend is running.');
+    }
+  };
+
+  const accountValueRowsForYear = (year) => (
+    accountValueRows.filter((row) => (
+      (row.year || Number(row.monthEnd?.slice(0, 4)) || 2026) === year
+    ))
+  );
+
+  const uniqueAccountValueColumnName = (year, section) => {
+    const valueKey = section === 'contributions' ? 'contributions' : 'accounts';
+    const existingNames = new Set(
+      accountValueRowsForYear(year).flatMap((row) => Object.keys(row[valueKey] || {})),
+    );
+    const baseName = section === 'contributions' ? 'New investment contribution' : 'New account';
+
+    if (!existingNames.has(baseName)) {
+      return baseName;
+    }
+
+    let suffix = 2;
+    while (existingNames.has(`${baseName} ${suffix}`)) {
+      suffix += 1;
+    }
+    return `${baseName} ${suffix}`;
+  };
+
+  const handleAddAccountValueColumn = async (year, section) => {
+    const columnName = uniqueAccountValueColumnName(year, section);
+    const targetRows = accountValueRowsForYear(year);
+    const valueKey = section === 'contributions' ? 'contributions' : 'accounts';
+
+    const nextRows = accountValueRows.map((row) => (
+      targetRows.some((targetRow) => targetRow.id === row.id)
+        ? {
+          ...row,
+          [valueKey]: {
+            ...row[valueKey],
+            [columnName]: row[valueKey]?.[columnName] ?? '0',
+          },
+        }
+        : row
+    ));
+
+    setAccountValueRows(nextRows);
+
+    try {
+      await Promise.all(
+        nextRows
+          .filter((row) => targetRows.some((targetRow) => targetRow.id === row.id) && row.monthEnd)
+          .map((row) => api.patch(`/account-values/${row.id}`, accountRowPayload(row))),
+      );
+      await loadAccountValues();
+    } catch (error) {
+      setStatus('Could not add the account value column. Make sure the backend is running.');
+      await loadAccountValues();
+    }
+  };
+
+  const handleRenameAccountValueColumn = async (year, section, currentColumnName, nextColumnName) => {
+    const trimmedColumnName = nextColumnName.trim();
+    if (!trimmedColumnName || trimmedColumnName === currentColumnName) {
+      return;
+    }
+
+    const targetRows = accountValueRows.filter((row) => (
+      (row.year || Number(row.monthEnd?.slice(0, 4)) || 2026) === year
+    ));
+    const valueKey = section === 'contributions' ? 'contributions' : 'accounts';
+    const nextRows = accountValueRows.map((row) => (
+      targetRows.some((targetRow) => targetRow.id === row.id)
+        ? {
+          ...row,
+          [valueKey]: Object.entries(row[valueKey] || {}).reduce((values, [name, value]) => {
+            if (name === currentColumnName) {
+              return {
+                ...values,
+                [trimmedColumnName]: values[trimmedColumnName] ?? value,
+              };
+            }
+            return {
+              ...values,
+              [name]: value,
+            };
+          }, {}),
+        }
+        : row
+    ));
+
+    setAccountValueRows(nextRows);
+
+    try {
+      await Promise.all(
+        nextRows
+          .filter((row) => targetRows.some((targetRow) => targetRow.id === row.id) && row.monthEnd)
+          .map((row) => api.patch(`/account-values/${row.id}`, accountRowPayload(row))),
+      );
+      await loadAccountValues();
+    } catch (error) {
+      setStatus('Could not rename the account value column. Make sure the backend is running.');
+      await loadAccountValues();
+    }
+  };
+
+  const handleDeleteAccountValueColumn = async (year, section, columnName) => {
+    const targetRows = accountValueRowsForYear(year);
+    const valueKey = section === 'contributions' ? 'contributions' : 'accounts';
+    const nextRows = accountValueRows.map((row) => (
+      targetRows.some((targetRow) => targetRow.id === row.id)
+        ? {
+          ...row,
+          [valueKey]: Object.fromEntries(
+            Object.entries(row[valueKey] || {}).filter(([name]) => name !== columnName),
+          ),
+        }
+        : row
+    ));
+
+    setAccountValueRows(nextRows);
+
+    try {
+      await Promise.all(
+        nextRows
+          .filter((row) => targetRows.some((targetRow) => targetRow.id === row.id) && row.monthEnd)
+          .map((row) => api.patch(`/account-values/${row.id}`, accountRowPayload(row))),
+      );
+      await loadAccountValues();
+    } catch (error) {
+      setStatus('Could not delete the account value column. Make sure the backend is running.');
+      await loadAccountValues();
     }
   };
 
@@ -763,6 +1099,8 @@ function App() {
       {activeTab === 'import' ? (
         <ImportTab
           automationJobId={automationJobId}
+          automationProfiles={automationProfiles}
+          automationAccountStatuses={automationAccountStatuses}
           columnMapping={columnMapping}
           columnOptions={columnOptions}
           categoryOptions={categoryOptions}
@@ -774,6 +1112,9 @@ function App() {
           categorizationPageSize={categorizationPageSize}
           categorizationTotal={categorizationTotal}
           hasHeader={hasHeader}
+          amountSign={amountSign}
+          duplicateImportBatch={duplicateImportBatch}
+          duplicateRowsToKeep={duplicateRowsToKeep}
           isAutomating={isAutomating}
           isCategorizing={isCategorizing}
           isClearingCategories={isClearingCategories}
@@ -781,6 +1122,7 @@ function App() {
           isUploading={isUploading}
           onAutomation={handleAutomation}
           onAutomationContinue={handleAutomationContinue}
+          onToggleAutomationAccount={handleToggleAutomationAccount}
           onApplyCategory={handleApplyCategory}
           onCategorizationPageChange={handleCategorizationPageChange}
           onClearCategories={handleClearCategories}
@@ -788,11 +1130,15 @@ function App() {
           onCustomCategoryChange={handleCustomCategoryChange}
           onFileChange={handleFileChange}
           onHeaderChange={setHasHeader}
+          onAmountSignChange={setAmountSign}
+          onResolveDuplicateRows={handleResolveDuplicateRows}
+          onToggleDuplicateRow={handleToggleDuplicateRow}
           onUpdateColumnRole={updateColumnRole}
           onUpload={handleUpload}
           previewGridStyle={previewGridStyle}
           previewRows={previewRows}
           selectedFile={selectedFile}
+          selectedAutomationAccounts={selectedAutomationAccounts}
           status={status}
         />
       ) : activeTab === 'categories' ? (
@@ -814,6 +1160,7 @@ function App() {
           onRemoveCategorizedMerchant={handleRemoveCategorizedMerchant}
           onRenameCategory={handleRenameCategory}
           onToggleUncategorizedGroup={handleToggleUncategorizedGroup}
+          onToggleVisibleUncategorizedGroups={handleToggleVisibleUncategorizedGroups}
           onUncategorizedPageChange={handleUncategorizedCategoryPageChange}
           selectedUncategorizedGroups={selectedUncategorizedGroups}
           uncategorizedPage={uncategorizedCategoryPage}
@@ -829,10 +1176,20 @@ function App() {
           onDeleteRow={handleDeleteAccountValueRow}
           onImportYear={handleImportAccountValues}
           onImportRoleChange={handleAccountImportRoleChange}
+          onAddColumn={handleAddAccountValueColumn}
+          onDeleteColumn={handleDeleteAccountValueColumn}
+          onRenameColumn={handleRenameAccountValueColumn}
           onUpdateRow={handleUpdateAccountValueRow}
         />
       ) : (
-        <AnalyticsTab summary={summary} />
+        <AnalyticsTab
+          categoryOptions={categoryOptions}
+          onCategoryChange={setAnalyticsCategory}
+          onTimeframeChange={setAnalyticsTimeframeDays}
+          selectedCategory={analyticsCategory}
+          selectedTimeframeDays={analyticsTimeframeDays}
+          summary={summary}
+        />
       )}
     </main>
   );

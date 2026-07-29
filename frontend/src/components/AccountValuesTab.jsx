@@ -13,7 +13,7 @@ const baseAccountValueColumns = [
   ['notes', 'Notes', 'text'],
 ];
 
-const accountYears = [2026, 2025, 2024, 2023, 2022, 2021];
+const initialAccountYears = [2026, 2025, 2024, 2023, 2022, 2021];
 const defaultAccountColumnsByYear = {
   2026: [
     'CIBC- Cash',
@@ -82,6 +82,35 @@ function investmentContributions(row) {
   return Object.values(row.contributions || {}).reduce((total, value) => total + numericValue(value), 0);
 }
 
+function PencilIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M4 20h4.6L19.4 9.2l-4.6-4.6L4 15.4V20z" />
+      <path d="M13.6 5.8l4.6 4.6" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M5 12.5l4.2 4.2L19 7" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M4 7h16" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M6 7l1 14h10l1-14" />
+      <path d="M9 7V4h6v3" />
+    </svg>
+  );
+}
+
 export function AccountValuesTab({
   importDraft,
   rows,
@@ -91,11 +120,29 @@ export function AccountValuesTab({
   onDeleteRow,
   onImportYear,
   onImportRoleChange,
+  onAddColumn,
+  onDeleteColumn,
+  onRenameColumn,
   onUpdateRow,
 }) {
   const [editingRows, setEditingRows] = useState([]);
+  const [editingColumnYears, setEditingColumnYears] = useState([]);
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedNotes, setExpandedNotes] = useState([]);
+  const [addedYears, setAddedYears] = useState([]);
+  const [hiddenColumns, setHiddenColumns] = useState([]);
+
+  const accountYears = useMemo(() => {
+    const rowYears = rows
+      .map((row) => row.year || Number(row.monthEnd?.slice(0, 4)))
+      .filter((year) => Number.isFinite(year));
+
+    return Array.from(new Set([
+      ...initialAccountYears,
+      ...addedYears,
+      ...rowYears,
+    ])).sort((left, right) => right - left);
+  }, [addedYears, rows]);
 
   const rowsByYear = useMemo(
     () => accountYears.reduce((groupedRows, year) => {
@@ -104,7 +151,7 @@ export function AccountValuesTab({
         .sort((left, right) => (left.monthEnd || '').localeCompare(right.monthEnd || ''));
       return groupedRows;
     }, {}),
-    [rows],
+    [accountYears, rows],
   );
 
   const getImportColumnRole = (columnIndex) => {
@@ -143,6 +190,14 @@ export function AccountValuesTab({
     ));
   };
 
+  const toggleColumnEditing = (year) => {
+    setEditingColumnYears((current) => (
+      current.includes(year)
+        ? current.filter((editingYear) => editingYear !== year)
+        : [...current, year]
+    ));
+  };
+
   const toggleYearSection = (year, section) => {
     setExpandedSections((current) => ({
       ...current,
@@ -161,6 +216,47 @@ export function AccountValuesTab({
     ));
   };
 
+  const handleAddYear = () => {
+    const nextYear = Math.max(...accountYears) + 1;
+    setAddedYears((current) => (
+      current.includes(nextYear) ? current : [nextYear, ...current]
+    ));
+  };
+
+  const handleRemoveYear = (year) => {
+    setAddedYears((current) => current.filter((addedYear) => addedYear !== year));
+  };
+
+  const handleAddColumn = (year, section) => {
+    onAddColumn(year, section);
+  };
+
+  const handleColumnNameKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.currentTarget.blur();
+    }
+  };
+
+  const handleColumnNameBlur = (event, year, section, currentColumnName) => {
+    const nextColumnName = event.target.value.trim();
+    if (!nextColumnName) {
+      event.target.value = currentColumnName;
+      return;
+    }
+
+    onRenameColumn(year, section, currentColumnName, nextColumnName);
+  };
+
+  const handleDeleteColumn = (year, section, columnName) => {
+    const confirmed = window.confirm(`Delete the "${columnName}" column? This will remove its values from every row in ${year}.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setHiddenColumns((current) => [...current, `${year}:${section}:${columnName}`]);
+    onDeleteColumn(year, section, columnName);
+  };
+
   return (
     <section className="account-values-page">
       <article className="insight-panel">
@@ -169,6 +265,7 @@ export function AccountValuesTab({
             <p className="eyebrow">Accounts</p>
             <h2>Account values</h2>
           </div>
+          <button type="button" onClick={handleAddYear}>Add year</button>
         </div>
 
         {importDraft ? (
@@ -219,19 +316,23 @@ export function AccountValuesTab({
         <div className="account-year-list">
           {accountYears.map((year) => {
             const yearRows = rowsByYear[year] || [];
+            const hiddenColumnSet = new Set(hiddenColumns.filter((columnKey) => columnKey.startsWith(`${year}:`)));
+            const isEditingColumns = editingColumnYears.includes(year);
             const accountColumns = Array.from(new Set([
               ...(defaultAccountColumnsByYear[year] || []),
               ...yearRows.flatMap((row) => Object.keys(row.accounts || {})),
-            ]));
+            ])).filter((accountName) => !hiddenColumnSet.has(`${year}:accounts:${accountName}`));
             const contributionNames = Array.from(new Set(
               yearRows.flatMap((row) => Object.keys(row.contributions || {})),
-            ));
+            )).filter((contributionName) => !hiddenColumnSet.has(`${year}:contributions:${contributionName}`));
             const hasContributions = contributionNames.length > 0;
             const showContributions = Boolean(expandedSections[year]?.contributions);
             const showAccounts = Boolean(expandedSections[year]?.accounts);
+            const hasEditableColumns = (showContributions && contributionNames.length > 0)
+              || (showAccounts && accountColumns.length > 0);
             const columns = [
               ...baseAccountValueColumns,
-              ...(showContributions ? contributionNames.map((contributionName) => [`contribution:${contributionName}`, `${contributionName} Contribution`, 'number']) : []),
+              ...(showContributions ? contributionNames.map((contributionName) => [`contribution:${contributionName}`, contributionName, 'number']) : []),
               ...(showAccounts ? accountColumns.map((accountName) => [`account:${accountName}`, accountName, 'number']) : []),
             ];
             const cashByMonthEnd = Object.fromEntries(yearRows.map((row) => [row.monthEnd, cashTotal(row)]));
@@ -241,7 +342,7 @@ export function AccountValuesTab({
             ]));
 
             return (
-              <details className="account-year-panel" key={year} open={year === 2026}>
+              <details className="account-year-panel" key={year} open={year === 2026 || addedYears.includes(year)}>
                 <summary>
                   <div>
                     <strong><span className="dropdown-arrow" aria-hidden="true" />{year}</strong>
@@ -253,6 +354,14 @@ export function AccountValuesTab({
                   }}>
                     Add row
                   </button>
+                  {addedYears.includes(year) && !yearRows.length ? (
+                    <button type="button" onClick={(event) => {
+                      event.preventDefault();
+                      handleRemoveYear(year);
+                    }}>
+                      Remove year
+                    </button>
+                  ) : null}
                   <label className="account-import-button" onClick={(event) => event.stopPropagation()}>
                     Import CSV
                     <input
@@ -270,30 +379,53 @@ export function AccountValuesTab({
                 </summary>
 
                 <div className="account-table-toggles">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={showContributions && hasContributions}
-                      disabled={!hasContributions}
-                      onChange={() => toggleYearSection(year, 'contributions')}
-                    />
-                    <span>{hasContributions ? 'Investment contributions' : 'No investment contributions'}</span>
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={showAccounts}
-                      onChange={() => toggleYearSection(year, 'accounts')}
-                    />
-                    <span>Accounts breakdown</span>
-                  </label>
+                  <div className="account-toggle-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={showContributions}
+                        onChange={() => toggleYearSection(year, 'contributions')}
+                      />
+                      <span>{hasContributions ? 'Investment contributions' : 'No investment contributions'}</span>
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={showAccounts}
+                        onChange={() => toggleYearSection(year, 'accounts')}
+                      />
+                      <span>Accounts breakdown</span>
+                    </label>
+                  </div>
+                  <div className="account-column-actions">
+                    {showContributions ? (
+                      <button type="button" onClick={() => handleAddColumn(year, 'contributions')}>
+                        Add contribution column
+                      </button>
+                    ) : null}
+                    {showAccounts ? (
+                      <button type="button" onClick={() => handleAddColumn(year, 'accounts')}>
+                        Add account column
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="account-values-table-wrap">
                   <table className={`account-values-table${year === 2026 ? '' : ' compact-account-table'}`}>
                     <thead>
                       <tr>
-                        {columns.map(([key, label]) => (
+                        {columns.map(([key, label]) => {
+                          const isContributionColumn = key.startsWith('contribution:');
+                          const isAccountColumn = key.startsWith('account:');
+                          const columnSection = isContributionColumn ? 'contributions' : 'accounts';
+                          const columnName = isContributionColumn
+                            ? key.slice('contribution:'.length)
+                            : isAccountColumn
+                              ? key.slice('account:'.length)
+                              : '';
+
+                          return (
                           <th key={label}>
                             {['actual', 'diff', 'cash', 'vsLastMonth'].includes(key) ? (
                               <span
@@ -307,13 +439,47 @@ export function AccountValuesTab({
                               >
                                 {label}
                               </span>
+                            ) : isContributionColumn || isAccountColumn ? (
+                              <span className="account-column-heading">
+                                {isEditingColumns ? (
+                                  <>
+                                    <input
+                                      className="account-column-name-input"
+                                      aria-label={`Rename ${isContributionColumn ? 'investment contribution' : 'account'} column`}
+                                      defaultValue={columnName}
+                                      onBlur={(event) => handleColumnNameBlur(event, year, columnSection, columnName)}
+                                      onKeyDown={handleColumnNameKeyDown}
+                                    />
+                                    <button
+                                      type="button"
+                                      aria-label={`Delete ${columnName} column`}
+                                      title="Delete column"
+                                      onClick={() => handleDeleteColumn(year, columnSection, columnName)}
+                                    >
+                                      <TrashIcon />
+                                    </button>
+                                  </>
+                                ) : columnName}
+                              </span>
                             ) : label}
                             {contributionTotals[key] !== undefined ? (
                               <small>{formatCurrency(contributionTotals[key])}</small>
                             ) : null}
                           </th>
-                        ))}
-                        <th aria-label="Actions" />
+                          );
+                        })}
+                        <th className="account-column-edit-actions" aria-label="Column actions">
+                          {hasEditableColumns ? (
+                            <button
+                              type="button"
+                              aria-label={isEditingColumns ? 'Done editing columns' : 'Edit columns'}
+                              title={isEditingColumns ? 'Done' : 'Edit columns'}
+                              onClick={() => toggleColumnEditing(year)}
+                            >
+                              {isEditingColumns ? <CheckIcon /> : <PencilIcon />}
+                            </button>
+                          ) : null}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -390,10 +556,22 @@ export function AccountValuesTab({
                               );
                             })}
                             <td className="account-row-actions">
-                              <button type="button" onClick={() => toggleRowEditing(row.id)}>
-                                {isEditing ? 'Done' : 'Edit'}
+                              <button
+                                type="button"
+                                aria-label={isEditing ? 'Done editing row' : 'Edit row'}
+                                title={isEditing ? 'Done' : 'Edit'}
+                                onClick={() => toggleRowEditing(row.id)}
+                              >
+                                {isEditing ? <CheckIcon /> : <PencilIcon />}
                               </button>
-                              <button type="button" onClick={() => onDeleteRow(row.id)}>Delete</button>
+                              <button
+                                type="button"
+                                aria-label="Delete row"
+                                title="Delete"
+                                onClick={() => onDeleteRow(row.id)}
+                              >
+                                <TrashIcon />
+                              </button>
                             </td>
                           </tr>
                         );

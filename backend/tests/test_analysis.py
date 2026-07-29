@@ -95,6 +95,34 @@ class AnalysisTests(unittest.TestCase):
             ],
         )
 
+    def test_filters_weekly_breakdown_by_category(self):
+        summary = summarize_transactions(
+            [
+                {"date": "2026-07-01", "description": "Coffee Shop", "amount": 5.00, "category": "coffee"},
+                {"date": "2026-07-01", "description": "Grocery Mart", "amount": 40.00, "category": "groceries"},
+            ],
+            as_of=date(2026, 7, 7),
+            weekly_days=14,
+            weekly_category="coffee",
+        )
+
+        week_totals = [week["total"] for week in summary["weekly_breakdown"]]
+        self.assertIn(5.00, week_totals)
+        self.assertNotIn(40.00, week_totals)
+
+    def test_adjusts_weekly_breakdown_timeframe(self):
+        summary = summarize_transactions(
+            [
+                {"date": "2026-01-15", "description": "Older Spend", "amount": 20.00, "category": "bills"},
+                {"date": "2026-07-01", "description": "Recent Spend", "amount": 10.00, "category": "food"},
+            ],
+            as_of=date(2026, 7, 7),
+            weekly_days=210,
+        )
+
+        self.assertLessEqual(summary["weekly_breakdown"][0]["week"], "2026-01-12")
+        self.assertIn(20.00, [week["total"] for week in summary["weekly_breakdown"]])
+
     def test_returns_empty_summary_when_there_is_no_spending(self):
         summary = summarize_transactions(
             [

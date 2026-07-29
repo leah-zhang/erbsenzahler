@@ -2,12 +2,27 @@ import { formatCurrency } from '../utils/currency';
 import { CategorySpendPieChart } from './CategorySpendPieChart';
 import { SpendTrendChart } from './SpendTrendChart';
 
-export function AnalyticsTab({ summary }) {
+const timeframeOptions = [
+  [90, '3 months'],
+  [180, '6 months'],
+  [365, '12 months'],
+  [730, '24 months'],
+];
+
+export function AnalyticsTab({
+  categoryOptions,
+  onCategoryChange,
+  onTimeframeChange,
+  selectedCategory,
+  selectedTimeframeDays,
+  summary,
+}) {
   const last30Days = summary?.last_30_days || {};
   const percentDifference = last30Days.percent_difference_vs_last_month;
   const percentDifferenceLabel = percentDifference === null || percentDifference === undefined
     ? 'No previous spend'
     : `${percentDifference > 0 ? '+' : ''}${percentDifference}%`;
+  const selectedTimeframeLabel = timeframeOptions.find(([days]) => days === selectedTimeframeDays)?.[1] || 'Custom';
 
   return (
     <>
@@ -58,9 +73,34 @@ export function AnalyticsTab({ summary }) {
 
       <section className="insights-grid">
         <article className="insight-panel trend-panel">
-          <div className="panel-heading">
-            <p className="eyebrow">Last 3 months</p>
-            <h2>Weekly spend</h2>
+          <div className="panel-heading analytics-chart-heading">
+            <div>
+              <p className="eyebrow">Last {selectedTimeframeLabel}</p>
+              <h2>Weekly spend</h2>
+            </div>
+            <div className="analytics-chart-controls">
+              <label>
+                <span>Category</span>
+                <select value={selectedCategory} onChange={(event) => onCategoryChange(event.target.value)}>
+                  <option value="">All categories</option>
+                  {(categoryOptions || []).map((category) => (
+                    <option value={category} key={`weekly-${category}`}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Timeframe</span>
+                <select value={selectedTimeframeDays} onChange={(event) => onTimeframeChange(Number(event.target.value))}>
+                  {timeframeOptions.map(([days, label]) => (
+                    <option value={days} key={days}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
           {summary?.weekly_breakdown?.length ? (
             <div className="trend-chart">

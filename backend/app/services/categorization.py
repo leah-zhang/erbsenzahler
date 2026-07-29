@@ -62,14 +62,36 @@ def _trim_location_tokens(tokens: list[str], has_store_number: bool) -> list[str
 def merchant_key(description: str) -> str:
     uppercase_description = description.upper()
     compact_description = re.sub(r"[^A-Z0-9]+", "", uppercase_description)
-    if re.search(r"\bAMAZON\.CA\*[A-Z0-9]+", uppercase_description):
+    if re.search(r"\bAMZN\s+MKTP\b", uppercase_description):
         return "AMAZON"
-    if re.search(r"\bAMZN\s+MKTP\s+CA\*[A-Z0-9]+", uppercase_description):
+    if re.search(r"\bAMAZON(?:\.CA)?\b", uppercase_description):
         return "AMAZON"
-    if re.search(r"\bAMAZON\s+[A-Z0-9]{6,}\b", uppercase_description):
-        return "AMAZON"
-    if re.search(r"\bPRESTO\b.*\bTORONTO,\s*ON\b", uppercase_description):
+    if re.search(r"^\s*PRESTO\b", uppercase_description):
         return "PRESTO"
+    if re.search(r"^\s*SEPHORA\b", uppercase_description):
+        return "Sephora"
+    if re.search(r"\bDOLLARAMA\b", uppercase_description):
+        return "Dollarama"
+    if "CHATIME" in compact_description or re.search(r"\bCHA\s+TIME\b", uppercase_description):
+        return "ChaTime"
+    if (
+        re.search(r"\bTGTG\s+[A-Z0-9]{6,}\b", uppercase_description)
+        or re.search(r"\bTOOGOODT\s+[A-Z0-9]{6,}\b", uppercase_description)
+        or re.search(r"\bTOOGOODTOG\s+[A-Z0-9]{6,}\b", uppercase_description)
+        or re.search(r"\bTOO\s+GOOD\s+TO\s+GO\b", uppercase_description)
+    ):
+        return "Too Good to Go"
+    if re.search(r"\bFOOD\s+BASICS\b", uppercase_description):
+        return "Food basics"
+    if (
+        re.search(r"\bGRAB[^A-Z0-9]+(?:[A-Z][^A-Z0-9]+)?[A-Z0-9]{6,}\b", uppercase_description)
+        or re.search(r"\bGRAB\s+\d+\b", uppercase_description)
+    ):
+        return "Grab"
+    if re.search(r"\bWAL\s*-?\s*MART\b", uppercase_description) or "WALMART" in compact_description:
+        return "Walmart"
+    if re.search(r"\bMC\s*DONALD'?S\b", uppercase_description) or "MCDONALDS" in compact_description:
+        return "Mcdonalds"
     if "SHOPPERSDRUGMART" in compact_description:
         return "Shoppers drug mart"
 
@@ -87,7 +109,16 @@ def merchant_key(description: str) -> str:
     return " ".join(tokens[:4])
 
 
-def build_merchant_groups(transactions: list[dict]) -> list[dict]:
+def _latest_date(items: list[dict]) -> str:
+    dates = [str(item.get("date") or "") for item in items if item.get("date")]
+    return max(dates) if dates else ""
+
+
+def _date_rank(value: str) -> int:
+    return int(value.replace("-", "")) if value else 0
+
+
+def build_merchant_groups(transactions: list[dict], sort_mode: str = "frequency") -> list[dict]:
     grouped = defaultdict(list)
     for transaction in transactions:
         key = merchant_key(transaction["description"])
@@ -112,7 +143,14 @@ def build_merchant_groups(transactions: list[dict]) -> list[dict]:
                     {item["description"] for item in items},
                     key=str.lower,
                 ),
+                "latest_date": _latest_date(items),
             }
+        )
+
+    if sort_mode == "uncategorized_priority":
+        return sorted(
+            groups,
+            key=lambda group: (-group["count"], -_date_rank(group["latest_date"]), group["display_name"].lower()),
         )
 
     return sorted(groups, key=lambda group: (-group["count"], group["display_name"].lower()))

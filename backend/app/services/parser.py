@@ -76,12 +76,15 @@ def _row_value(row: list[str], column_index: int | None) -> str:
     return _clean(row[column_index])
 
 
-def _parse_amount(row: list[str], headers: dict[str, int]) -> float:
+def _parse_amount(row: list[str], headers: dict[str, int], amount_sign: str = "spend_positive") -> float:
     if "amount" in headers:
         raw_amount = _row_value(row, headers["amount"])
         if not raw_amount:
             return 0.0
-        return _to_float(raw_amount)
+        amount = _to_float(raw_amount)
+        if amount_sign == "spend_negative":
+            return round(-amount, 2)
+        return amount
 
     debit = _row_value(row, headers.get("debit"))
     credit = _row_value(row, headers.get("credit"))
@@ -110,7 +113,15 @@ def _normalize_date(value: str) -> str:
     raise StatementParseError(f"Invalid date value: {value}")
 
 
-def parse_statement(path: Path, column_mapping: dict[str, Any] | None = None, has_header: bool = True) -> dict:
+def parse_statement(
+    path: Path,
+    column_mapping: dict[str, Any] | None = None,
+    has_header: bool = True,
+    amount_sign: str = "spend_positive",
+) -> dict:
+    if amount_sign not in {"spend_positive", "spend_negative"}:
+        raise StatementParseError("Amount sign must be spend_positive or spend_negative.")
+
     extension = path.suffix.lower()
 
     if extension == ".csv":
@@ -143,7 +154,7 @@ def parse_statement(path: Path, column_mapping: dict[str, Any] | None = None, ha
                     {
                         "date": _normalize_date(_row_value(row, headers["date"])),
                         "description": description,
-                        "amount": _parse_amount(row, headers),
+                        "amount": _parse_amount(row, headers, amount_sign=amount_sign),
                         "category": _row_value(row, headers.get("category")) or "uncategorized",
                         "account": _row_value(row, headers.get("account")) or "bank",
                     }

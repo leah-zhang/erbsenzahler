@@ -16,6 +16,7 @@ export function CategoriesTab({
   onRemoveCategorizedMerchant,
   onRenameCategory,
   onToggleUncategorizedGroup,
+  onToggleVisibleUncategorizedGroups,
   onUncategorizedPageChange,
   selectedUncategorizedGroups,
   uncategorizedPage,
@@ -30,6 +31,14 @@ export function CategoriesTab({
   const uncategorizedFirstItem = uncategorizedTotal ? uncategorizedPage * uncategorizedPageSize + 1 : 0;
   const uncategorizedLastItem = Math.min((uncategorizedPage + 1) * uncategorizedPageSize, uncategorizedTotal);
   const batchCustomCategory = customCategories.__batch_uncategorized__ || '';
+  const visibleSelectableMerchantKeys = (categoryDetails.uncategorized_groups || [])
+    .filter((group) => {
+      const excludedMerchants = categoryGroupExclusions[group.merchant_key] || [];
+      return group.merchants.some((merchant) => !excludedMerchants.includes(merchant));
+    })
+    .map((group) => group.merchant_key);
+  const areAllVisibleSelected = Boolean(visibleSelectableMerchantKeys.length)
+    && visibleSelectableMerchantKeys.every((merchantKey) => selectedUncategorizedGroups.includes(merchantKey));
 
   return (
     <section className="categories-page">
@@ -125,8 +134,16 @@ export function CategoriesTab({
             {categoryDetails.uncategorized_groups?.length ? (
               <div className="batch-category-toolbar">
                 <div>
-                  <strong>{selectedUncategorizedGroups.length} selected</strong>
-                  <span>Apply one category to multiple merchant groups.</span>
+                  <label className="select-all-merchants">
+                    <input
+                      type="checkbox"
+                      checked={areAllVisibleSelected}
+                      disabled={isCategorizing || !visibleSelectableMerchantKeys.length}
+                      onChange={() => onToggleVisibleUncategorizedGroups(visibleSelectableMerchantKeys)}
+                    />
+                    <span>Select all visible</span>
+                  </label>
+                  <small>{selectedUncategorizedGroups.length} selected</small>
                 </div>
                 <div className="category-actions">
                   <select
@@ -179,7 +196,6 @@ export function CategoriesTab({
               categoryDetails.uncategorized_groups.map((group) => {
                 const excludedMerchants = categoryGroupExclusions[group.merchant_key] || [];
                 const visibleMerchants = group.merchants.filter((merchant) => !excludedMerchants.includes(merchant));
-                const customCategory = customCategories[group.merchant_key] || '';
                 const isSelected = selectedUncategorizedGroups.includes(group.merchant_key);
 
                 return (
@@ -218,23 +234,6 @@ export function CategoriesTab({
                             </option>
                           ))}
                         </select>
-
-                        <div className="custom-category">
-                          <input
-                            type="text"
-                            value={customCategory}
-                            placeholder="Custom category"
-                            disabled={isCategorizing || !visibleMerchants.length}
-                            onChange={(event) => onCustomCategoryChange(group.merchant_key, event.target.value)}
-                          />
-                          <button
-                            type="button"
-                            disabled={isCategorizing || !visibleMerchants.length || !customCategory.trim()}
-                            onClick={() => onApplyCategory(group.merchant_key, customCategory, excludedMerchants)}
-                          >
-                            Add
-                          </button>
-                        </div>
                       </div>
                     </summary>
                     <div className="merchant-chip-list">

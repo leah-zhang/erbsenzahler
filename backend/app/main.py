@@ -12,14 +12,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session
 
-from app.models import AccountValueEntry, AccountValueSnapshot, Statement, Transaction, create_db_and_tables, engine
+from app.models import (
+    AccountValueEntry,
+    AccountValueSnapshot,
+    MerchantCategoryRule,
+    Statement,
+    Transaction,
+    create_db_and_tables,
+    engine,
+)
 from app.services.analysis import summarize_transactions
 from app.services.categorization import build_merchant_groups, merchant_key
 from app.services.parser import StatementParseError, parse_statement
-from app.services.statement_automation import continue_download_flow, start_download_flow
+from app.services.statement_automation import (
+    available_download_profiles,
+    continue_download_flow,
+    get_download_flow,
+    start_download_flow,
+)
 
 app = FastAPI(title="Finance Tracker API")
 create_db_and_tables()
+
+_pending_duplicate_imports: dict[str, dict] = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,6 +51,18 @@ class StatementUploadResponse(BaseModel):
     status: str
     parsed_format: str
     summary: dict
+    duplicate_batch_id: str | None = None
+    duplicates: list[dict] = PydanticField(default_factory=list)
+
+
+class DuplicateImportResolutionRequest(BaseModel):
+    keep_duplicate_ids: list[str] = PydanticField(default_factory=list)
+
+
+class DuplicateImportResolutionResponse(BaseModel):
+    status: str
+    imported_duplicates: int
+    discarded_duplicates: int
 
 
 class MonthlySummaryResponse(BaseModel):
@@ -50,6 +77,7 @@ class ClearDatabaseResponse(BaseModel):
     status: str
     deleted_statements: int
     deleted_transactions: int
+    deleted_category_rules: int = 0
 
 
 class ClearTransactionsResponse(BaseModel):
@@ -107,6 +135,17 @@ class CategoryDetailItem(BaseModel):
 
 class CategoryDetailsResponse(BaseModel):
     categories: list[CategoryDetailItem]
+    uncategorized_groups: list[CategoryMerchantGroup]
+    uncategorized_limit: int
+    uncategorized_offset: int
+    uncategorized_total: int
+    uncategorized_has_more: bool
+
+
+class CategoryDashboardResponse(BaseModel):
+    categories: list[str]
+    category_summary: list[CategorySummaryItem]
+    category_details: list[CategoryDetailItem]
     uncategorized_groups: list[CategoryMerchantGroup]
     uncategorized_limit: int
     uncategorized_offset: int
@@ -190,6 +229,15 @@ class AccountValuesImportResponse(BaseModel):
     year: int
     imported_snapshots: int
     imported_entries: int
+
+
+class StatementDownloadBankRequest(BaseModel):
+    bank_id: str
+    account_ids: list[str] = PydanticField(default_factory=list)
+
+
+class StatementDownloadRequest(BaseModel):
+    banks: list[StatementDownloadBankRequest] = PydanticField(default_factory=list)
 
 
 ACCOUNT_VALUE_BASE_COLUMNS = {
@@ -328,6 +376,162 @@ def _replace_snapshot_entries(
         )
 
 
+def _merchant_category_rules(session: Session) -> dict[str, str]:
+    return {
+        rule.merchant_key: rule.category
+        for rule in session.query(MerchantCategoryRule).all()
+        if rule.merchant_key and rule.category
+    }
+
+
+def _upsert_merchant_category_rule(session: Session, key: str, category: str) -> None:
+    trimmed_key = key.strip()
+    trimmed_category = category.strip()
+    if not trimmed_key or not trimmed_category or trimmed_category == "uncategorized":
+        return
+
+    now = datetime.now(UTC).isoformat()
+    existing = next(
+        (
+            rule
+            for rule in session.query(MerchantCategoryRule).all()
+            if rule.merchant_key == trimmed_key
+        ),
+        None,
+    )
+    if existing:
+        existing.category = trimmed_category
+        existing.updated_at = now
+        session.add(existing)
+        return
+
+    session.add(
+        MerchantCategoryRule(
+            merchant_key=trimmed_key,
+            category=trimmed_category,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
+def _transaction_fingerprint(transaction: dict) -> str:
+    normalized_description = " ".join(str(transaction.get("description") or "").strip().lower().split())
+    normalized_account = str(transaction.get("account") or "unknown").strip().lower()
+    amount = round(float(transaction.get("amount") or 0), 2)
+    return f"{transaction.get('date')}|{normalized_description}|{amount:.2f}|{normalized_account}"
+
+
+def _transaction_payload_with_category(transaction: dict, merchant_rules: dict[str, str]) -> dict:
+    parsed_category = transaction.get("category", "uncategorized")
+    category = parsed_category
+    if parsed_category == "uncategorized":
+        category = merchant_rules.get(merchant_key(transaction["description"]), parsed_category)
+    payload = {
+        "date": transaction["date"],
+        "description": transaction["description"],
+        "amount": transaction["amount"],
+        "category": category,
+        "account": transaction.get("account", "unknown"),
+    }
+    payload["fingerprint"] = _transaction_fingerprint(payload)
+    return payload
+
+
+def _add_transaction(session: Session, payload: dict) -> None:
+    session.add(
+        Transaction(
+            date=payload["date"],
+            description=payload["description"],
+            amount=payload["amount"],
+            category=payload.get("category", "uncategorized"),
+            account=payload.get("account", "unknown"),
+            fingerprint=payload.get("fingerprint") or _transaction_fingerprint(payload),
+        )
+    )
+
+
+def _category_dashboard_response(
+    transactions: list[Transaction],
+    rules: list[MerchantCategoryRule],
+    uncategorized_limit: int = 10,
+    uncategorized_offset: int = 0,
+) -> CategoryDashboardResponse:
+    uncategorized_limit = max(1, min(uncategorized_limit, 100))
+    uncategorized_offset = max(uncategorized_offset, 0)
+
+    category_transactions: dict[str, list[dict]] = {}
+    uncategorized_spending = []
+
+    for transaction in transactions:
+        transaction_item = {
+            "date": transaction.date,
+            "description": transaction.description,
+            "amount": transaction.amount,
+        }
+        if transaction.amount <= 0:
+            continue
+        if transaction.category and transaction.category != "uncategorized":
+            category_transactions.setdefault(transaction.category, []).append(transaction_item)
+        elif transaction.category == "uncategorized":
+            uncategorized_spending.append(transaction_item)
+
+    rule_groups_by_category: dict[str, dict[str, CategoryMerchantGroup]] = {}
+    rule_categories = set()
+    for rule in rules:
+        if not rule.category or rule.category == "uncategorized":
+            continue
+        rule_categories.add(rule.category)
+        rule_groups_by_category.setdefault(rule.category, {})[rule.merchant_key] = CategoryMerchantGroup(
+            merchant_key=rule.merchant_key,
+            display_name=rule.merchant_key,
+            count=0,
+            examples=[],
+            merchants=[],
+        )
+
+    categories = sorted(set(category_transactions) | rule_categories, key=str.lower)
+    category_summary = [
+        CategorySummaryItem(
+            name=name,
+            transaction_count=len(category_transactions.get(name, [])),
+        )
+        for name in categories
+    ]
+
+    category_details = []
+    for name in categories:
+        items = category_transactions.get(name, [])
+        merchant_groups = [
+            CategoryMerchantGroup(**group)
+            for group in build_merchant_groups(items)
+        ]
+        merchant_groups.sort(key=lambda group: (-group.count, group.display_name.lower()))
+        category_details.append(
+            CategoryDetailItem(
+                name=name,
+                transaction_count=len(items),
+                merchant_groups=merchant_groups,
+            )
+        )
+
+    uncategorized_groups = build_merchant_groups(uncategorized_spending, sort_mode="uncategorized_priority")
+    paged_uncategorized_groups = uncategorized_groups[
+        uncategorized_offset:uncategorized_offset + uncategorized_limit
+    ]
+
+    return CategoryDashboardResponse(
+        categories=categories,
+        category_summary=category_summary,
+        category_details=category_details,
+        uncategorized_groups=[CategoryMerchantGroup(**group) for group in paged_uncategorized_groups],
+        uncategorized_limit=uncategorized_limit,
+        uncategorized_offset=uncategorized_offset,
+        uncategorized_total=len(uncategorized_groups),
+        uncategorized_has_more=uncategorized_offset + uncategorized_limit < len(uncategorized_groups),
+    )
+
+
 @app.get("/api/health")
 def health_check() -> dict:
     return {"status": "ok", "service": "finance-tracker-api"}
@@ -338,6 +542,7 @@ async def upload_statement(
     file: UploadFile = File(...),
     column_mapping: Annotated[str | None, Form()] = None,
     has_header: Annotated[bool, Form()] = True,
+    amount_sign: Annotated[str, Form()] = "spend_positive",
 ) -> StatementUploadResponse:
     storage_dir = Path("storage/uploads")
     storage_dir.mkdir(parents=True, exist_ok=True)
@@ -358,11 +563,17 @@ async def upload_statement(
             raise HTTPException(status_code=400, detail="Column mapping must be valid JSON.") from exc
 
     try:
-        parsed = parse_statement(destination, column_mapping=mapping, has_header=has_header)
+        parsed = parse_statement(destination, column_mapping=mapping, has_header=has_header, amount_sign=amount_sign)
     except StatementParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with Session(engine) as session:
+        merchant_rules = _merchant_category_rules(session)
+        existing_fingerprints = {
+            transaction.fingerprint or _transaction_fingerprint(transaction.model_dump())
+            for transaction in session.query(Transaction).all()
+        }
+        seen_upload_fingerprints = set()
         statement = Statement(
             filename=original_filename,
             uploaded_at=datetime.now(UTC).isoformat(),
@@ -374,29 +585,79 @@ async def upload_statement(
         session.refresh(statement)
         statement_id = statement.id
 
+        imported_transactions = 0
+        duplicate_rows = []
         for transaction in parsed.get("transactions", []):
-            session.add(
-                Transaction(
-                    date=transaction["date"],
-                    description=transaction["description"],
-                    amount=transaction["amount"],
-                    category=transaction.get("category", "uncategorized"),
-                    account=transaction.get("account", "unknown"),
-                )
-            )
+            payload = _transaction_payload_with_category(transaction, merchant_rules)
+            fingerprint = payload["fingerprint"]
+            if fingerprint in existing_fingerprints or fingerprint in seen_upload_fingerprints:
+                duplicate_id = str(uuid4())
+                duplicate_rows.append({
+                    "id": duplicate_id,
+                    **payload,
+                })
+                continue
+
+            _add_transaction(session, payload)
+            seen_upload_fingerprints.add(fingerprint)
+            imported_transactions += 1
         session.commit()
+
+    duplicate_batch_id = None
+    if duplicate_rows:
+        duplicate_batch_id = str(uuid4())
+        _pending_duplicate_imports[duplicate_batch_id] = {
+            "filename": original_filename,
+            "rows": duplicate_rows,
+        }
+
+    summary = {
+        **parsed["summary"],
+        "imported": imported_transactions,
+        "duplicate_rows": len(duplicate_rows),
+    }
 
     return StatementUploadResponse(
         id=str(statement_id),
         filename=original_filename,
         status="imported",
         parsed_format=parsed["format"],
-        summary=parsed["summary"],
+        summary=summary,
+        duplicate_batch_id=duplicate_batch_id,
+        duplicates=duplicate_rows,
+    )
+
+
+@app.post("/api/statements/upload/duplicates/{batch_id}", response_model=DuplicateImportResolutionResponse)
+def resolve_duplicate_statement_rows(
+    batch_id: str,
+    request: DuplicateImportResolutionRequest,
+) -> DuplicateImportResolutionResponse:
+    batch = _pending_duplicate_imports.pop(batch_id, None)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Duplicate import review batch was not found.")
+
+    keep_ids = set(request.keep_duplicate_ids)
+    rows = batch.get("rows", [])
+    kept_rows = [row for row in rows if row["id"] in keep_ids]
+
+    with Session(engine) as session:
+        for row in kept_rows:
+            _add_transaction(session, row)
+        session.commit()
+
+    return DuplicateImportResolutionResponse(
+        status="resolved",
+        imported_duplicates=len(kept_rows),
+        discarded_duplicates=len(rows) - len(kept_rows),
     )
 
 
 @app.get("/api/analytics/monthly", response_model=MonthlySummaryResponse)
-def monthly_summary() -> MonthlySummaryResponse:
+def monthly_summary(
+    weekly_days: int = Query(90, ge=7, le=730),
+    weekly_category: str = "",
+) -> MonthlySummaryResponse:
     with Session(engine) as session:
         transactions = session.query(Transaction).all()
 
@@ -410,7 +671,13 @@ def monthly_summary() -> MonthlySummaryResponse:
         for transaction in transactions
     ]
 
-    return MonthlySummaryResponse(**summarize_transactions(normalized_transactions))
+    return MonthlySummaryResponse(
+        **summarize_transactions(
+            normalized_transactions,
+            weekly_days=weekly_days,
+            weekly_category=weekly_category or None,
+        )
+    )
 
 
 @app.get("/api/transactions/categorization-suggestions", response_model=CategorizationSuggestionsResponse)
@@ -422,10 +689,15 @@ def categorization_suggestions(
     offset = max(offset, 0)
 
     with Session(engine) as session:
-        transactions = session.query(Transaction).all()
+        transactions = (
+            session.query(Transaction)
+            .filter(Transaction.amount > 0, Transaction.category == "uncategorized")
+            .all()
+        )
 
     uncategorized_spending = [
         {
+            "date": transaction.date,
             "description": transaction.description,
             "amount": transaction.amount,
         }
@@ -433,7 +705,7 @@ def categorization_suggestions(
         if transaction.amount > 0 and transaction.category == "uncategorized"
     ]
 
-    groups = build_merchant_groups(uncategorized_spending)
+    groups = build_merchant_groups(uncategorized_spending, sort_mode="uncategorized_priority")
     paged_groups = groups[offset:offset + limit]
 
     return CategorizationSuggestionsResponse(
@@ -448,16 +720,16 @@ def categorization_suggestions(
 @app.get("/api/transactions/categories", response_model=CategoriesResponse)
 def transaction_categories() -> CategoriesResponse:
     with Session(engine) as session:
-        transactions = session.query(Transaction).all()
+        transaction_rows = session.connection().exec_driver_sql(
+            'SELECT DISTINCT category FROM "transaction" '
+            "WHERE category IS NOT NULL AND category != '' AND category != 'uncategorized'"
+        ).all()
+        rule_rows = session.connection().exec_driver_sql(
+            "SELECT DISTINCT category FROM merchantcategoryrule "
+            "WHERE category IS NOT NULL AND category != '' AND category != 'uncategorized'"
+        ).all()
 
-    categories = sorted(
-        {
-            transaction.category
-            for transaction in transactions
-            if transaction.category and transaction.category != "uncategorized"
-        },
-        key=str.lower,
-    )
+    categories = sorted({row[0] for row in [*transaction_rows, *rule_rows]}, key=str.lower)
 
     return CategoriesResponse(categories=categories)
 
@@ -465,13 +737,19 @@ def transaction_categories() -> CategoriesResponse:
 @app.get("/api/transactions/category-summary", response_model=CategorySummaryResponse)
 def transaction_category_summary() -> CategorySummaryResponse:
     with Session(engine) as session:
-        transactions = session.query(Transaction).all()
+        transaction_rows = session.connection().exec_driver_sql(
+            'SELECT category, COUNT(*) FROM "transaction" '
+            "WHERE category IS NOT NULL AND category != '' AND category != 'uncategorized' "
+            "GROUP BY category"
+        ).all()
+        rule_rows = session.connection().exec_driver_sql(
+            "SELECT DISTINCT category FROM merchantcategoryrule "
+            "WHERE category IS NOT NULL AND category != '' AND category != 'uncategorized'"
+        ).all()
 
-    counts: dict[str, int] = {}
-    for transaction in transactions:
-        if transaction.category and transaction.category != "uncategorized":
-            counts[transaction.category] = counts.get(transaction.category, 0) + 1
-
+    counts = {row[0]: row[1] for row in transaction_rows}
+    for row in rule_rows:
+        counts.setdefault(row[0], 0)
     categories = [
         CategorySummaryItem(name=name, transaction_count=count)
         for name, count in sorted(counts.items(), key=lambda item: item[0].lower())
@@ -480,53 +758,46 @@ def transaction_category_summary() -> CategorySummaryResponse:
     return CategorySummaryResponse(categories=categories)
 
 
+@app.get("/api/transactions/category-dashboard", response_model=CategoryDashboardResponse)
+def transaction_category_dashboard(
+    uncategorized_limit: int = 10,
+    uncategorized_offset: int = 0,
+) -> CategoryDashboardResponse:
+    with Session(engine) as session:
+        transactions = session.query(Transaction).filter(Transaction.amount > 0).all()
+        rules = session.query(MerchantCategoryRule).all()
+
+    return _category_dashboard_response(
+        transactions,
+        rules,
+        uncategorized_limit=uncategorized_limit,
+        uncategorized_offset=uncategorized_offset,
+    )
+
+
 @app.get("/api/transactions/category-details", response_model=CategoryDetailsResponse)
 def transaction_category_details(
     uncategorized_limit: int = 10,
     uncategorized_offset: int = 0,
 ) -> CategoryDetailsResponse:
-    uncategorized_limit = max(1, min(uncategorized_limit, 100))
-    uncategorized_offset = max(uncategorized_offset, 0)
-
     with Session(engine) as session:
-        transactions = session.query(Transaction).all()
+        transactions = session.query(Transaction).filter(Transaction.amount > 0).all()
+        rules = session.query(MerchantCategoryRule).all()
 
-    category_transactions: dict[str, list[dict]] = {}
-    uncategorized_spending = []
-
-    for transaction in transactions:
-        transaction_item = {
-            "description": transaction.description,
-            "amount": transaction.amount,
-        }
-        if transaction.amount <= 0:
-            continue
-        if transaction.category and transaction.category != "uncategorized":
-            category_transactions.setdefault(transaction.category, []).append(transaction_item)
-        elif transaction.category == "uncategorized":
-            uncategorized_spending.append(transaction_item)
-
-    categories = [
-        CategoryDetailItem(
-            name=name,
-            transaction_count=len(items),
-            merchant_groups=build_merchant_groups(items),
-        )
-        for name, items in sorted(category_transactions.items(), key=lambda item: item[0].lower())
-    ]
-
-    uncategorized_groups = build_merchant_groups(uncategorized_spending)
-    paged_uncategorized_groups = uncategorized_groups[
-        uncategorized_offset:uncategorized_offset + uncategorized_limit
-    ]
-
-    return CategoryDetailsResponse(
-        categories=categories,
-        uncategorized_groups=paged_uncategorized_groups,
+    dashboard = _category_dashboard_response(
+        transactions,
+        rules,
         uncategorized_limit=uncategorized_limit,
         uncategorized_offset=uncategorized_offset,
-        uncategorized_total=len(uncategorized_groups),
-        uncategorized_has_more=uncategorized_offset + uncategorized_limit < len(uncategorized_groups),
+    )
+
+    return CategoryDetailsResponse(
+        categories=dashboard.category_details,
+        uncategorized_groups=dashboard.uncategorized_groups,
+        uncategorized_limit=dashboard.uncategorized_limit,
+        uncategorized_offset=dashboard.uncategorized_offset,
+        uncategorized_total=dashboard.uncategorized_total,
+        uncategorized_has_more=dashboard.uncategorized_has_more,
     )
 
 
@@ -542,6 +813,7 @@ def rename_category(request: RenameCategoryRequest) -> RenameCategoryResponse:
 
     with Session(engine) as session:
         transactions = session.query(Transaction).all()
+        rules = session.query(MerchantCategoryRule).all()
         updated_transactions = 0
 
         for transaction in transactions:
@@ -549,6 +821,11 @@ def rename_category(request: RenameCategoryRequest) -> RenameCategoryResponse:
                 transaction.category = new_category
                 session.add(transaction)
                 updated_transactions += 1
+        for rule in rules:
+            if rule.category == current_category:
+                rule.category = new_category
+                rule.updated_at = datetime.now(UTC).isoformat()
+                session.add(rule)
 
         session.commit()
 
@@ -569,14 +846,17 @@ def categorize_merchant(request: CategorizeMerchantRequest) -> CategorizeMerchan
     excluded_merchants = {merchant.strip() for merchant in request.excluded_merchants if merchant.strip()}
 
     with Session(engine) as session:
-        transactions = session.query(Transaction).all()
+        transactions = (
+            session.query(Transaction)
+            .filter(Transaction.amount > 0, Transaction.category == "uncategorized")
+            .all()
+        )
         updated_transactions = 0
+        _upsert_merchant_category_rule(session, request.merchant_key, category)
 
         for transaction in transactions:
             if (
-                transaction.amount > 0
-                and transaction.category == "uncategorized"
-                and merchant_key(transaction.description) == request.merchant_key
+                merchant_key(transaction.description) == request.merchant_key
                 and transaction.description not in excluded_merchants
             ):
                 transaction.category = category
@@ -604,6 +884,7 @@ def remove_merchant_from_category(request: RemoveMerchantCategoryRequest) -> Rem
 
     with Session(engine) as session:
         transactions = session.query(Transaction).all()
+        rules = session.query(MerchantCategoryRule).all()
         updated_transactions = 0
 
         for transaction in transactions:
@@ -615,6 +896,9 @@ def remove_merchant_from_category(request: RemoveMerchantCategoryRequest) -> Rem
                 transaction.category = "uncategorized"
                 session.add(transaction)
                 updated_transactions += 1
+        for rule in rules:
+            if rule.category == category and rule.merchant_key == merchant_key(merchant):
+                session.delete(rule)
 
         session.commit()
 
@@ -884,19 +1168,24 @@ def clear_database() -> ClearDatabaseResponse:
     with Session(engine) as session:
         transactions = session.query(Transaction).all()
         statements = session.query(Statement).all()
+        rules = session.query(MerchantCategoryRule).all()
         deleted_transactions = len(transactions)
         deleted_statements = len(statements)
+        deleted_category_rules = len(rules)
 
         for transaction in transactions:
             session.delete(transaction)
         for statement in statements:
             session.delete(statement)
+        for rule in rules:
+            session.delete(rule)
         session.commit()
 
     return ClearDatabaseResponse(
         status="cleared",
         deleted_statements=deleted_statements,
         deleted_transactions=deleted_transactions,
+        deleted_category_rules=deleted_category_rules,
     )
 
 
@@ -936,10 +1225,27 @@ def clear_transaction_categories() -> ClearCategoriesResponse:
     )
 
 
+@app.get("/api/statements/download/profiles")
+def statement_download_profiles() -> dict:
+    return available_download_profiles()
+
+
 @app.post("/api/statements/download")
-def download_statements() -> dict:
-    result = start_download_flow()
+def download_statements(request: StatementDownloadRequest | None = None) -> dict:
+    requested_banks = [
+        {
+            "bank_id": bank.bank_id,
+            "account_ids": bank.account_ids,
+        }
+        for bank in (request.banks if request else [])
+    ]
+    result = start_download_flow(requested_banks=requested_banks)
     return result
+
+
+@app.get("/api/statements/download/{job_id}")
+def statement_download_status(job_id: str) -> dict:
+    return get_download_flow(job_id)
 
 
 @app.post("/api/statements/download/{job_id}/continue")

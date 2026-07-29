@@ -30,6 +30,13 @@ class ParserTests(unittest.TestCase):
             },
         )
 
+    def test_parses_negative_spend_amount_statement_csv(self):
+        path = self.write_csv("Date,Description,Amount\n2026-07-01,Coffee,-4.25\n2026-07-02,Payment,100.00\n")
+
+        parsed = parse_statement(path, amount_sign="spend_negative")
+
+        self.assertEqual([item["amount"] for item in parsed["transactions"]], [4.25, -100.00])
+
     def test_parses_debit_credit_statement_csv(self):
         path = self.write_csv(
             "Transaction Date,Details,Debit,Credit\n"
@@ -60,6 +67,12 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parsed["summary"]["rows"], 2)
         self.assertEqual(parsed["transactions"][0]["description"], "Coffee")
         self.assertEqual(parsed["transactions"][1]["amount"], 31.10)
+
+    def test_rejects_invalid_amount_sign(self):
+        path = self.write_csv("Date,Description,Amount\n2026-07-01,Coffee,4.25\n")
+
+        with self.assertRaisesRegex(StatementParseError, "Amount sign"):
+            parse_statement(path, amount_sign="sometimes")
 
     def test_parses_headerless_debit_credit_csv_with_column_mapping(self):
         path = self.write_csv("07/02/2026,Groceries,31.10,\n07/03/2026,Paycheque,,1000.00\n")

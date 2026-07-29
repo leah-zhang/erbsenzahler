@@ -5,12 +5,18 @@ from io import BytesIO
 from fastapi import HTTPException, UploadFile
 from sqlmodel import Session
 
-from app.models import Statement, Transaction, engine
+from app.models import MerchantCategoryRule, Statement, Transaction, engine
 from app.main import categorize_merchant, categorization_suggestions, clear_database, clear_transaction_categories
 from app.main import clear_transactions, rename_category
 from app.main import remove_merchant_from_category, transaction_categories, transaction_category_details
-from app.main import transaction_category_summary, upload_statement
-from app.main import CategorizeMerchantRequest, RemoveMerchantCategoryRequest, RenameCategoryRequest
+from app.main import transaction_category_dashboard, transaction_category_summary, upload_statement
+from app.main import (
+    CategorizeMerchantRequest,
+    DuplicateImportResolutionRequest,
+    RemoveMerchantCategoryRequest,
+    RenameCategoryRequest,
+    resolve_duplicate_statement_rows,
+)
 
 
 class UploadTests(unittest.IsolatedAsyncioTestCase):
@@ -25,6 +31,10 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
                 transaction.model_dump(exclude={"id"})
                 for transaction in session.query(Transaction).all()
             ]
+            cls._saved_category_rules = [
+                rule.model_dump(exclude={"id"})
+                for rule in session.query(MerchantCategoryRule).all()
+            ]
 
     @classmethod
     def tearDownClass(cls):
@@ -33,12 +43,16 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
                 session.delete(transaction)
             for statement in session.query(Statement).all():
                 session.delete(statement)
+            for rule in session.query(MerchantCategoryRule).all():
+                session.delete(rule)
             session.commit()
 
             for statement_data in cls._saved_statements:
                 session.add(Statement(**statement_data))
             for transaction_data in cls._saved_transactions:
                 session.add(Transaction(**transaction_data))
+            for rule_data in cls._saved_category_rules:
+                session.add(MerchantCategoryRule(**rule_data))
             session.commit()
 
     async def test_upload_imports_csv_transactions(self):
@@ -63,6 +77,47 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, "imported")
         self.assertEqual(response.summary["rows"], 1)
 
+    async def test_upload_normalizes_negative_spend_amounts(self):
+        clear_database()
+        file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount\n2026-07-01,Coffee,-4.25\n"))
+
+        await upload_statement(file, amount_sign="spend_negative")
+
+        suggestions = categorization_suggestions()
+        self.assertEqual(suggestions.total, 1)
+        self.assertEqual(suggestions.groups[0].merchant_key, "COFFEE")
+
+    async def test_upload_detects_duplicate_transactions_for_review(self):
+        clear_database()
+        file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount,Account\n2026-07-01,Coffee,4.25,Visa\n"))
+        await upload_statement(file)
+
+        file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount,Account\n2026-07-01, Coffee  ,4.25,Visa\n"))
+        response = await upload_statement(file)
+
+        self.assertEqual(response.summary["imported"], 0)
+        self.assertEqual(response.summary["duplicate_rows"], 1)
+        self.assertIsNotNone(response.duplicate_batch_id)
+        self.assertEqual(response.duplicates[0]["description"], "Coffee")
+
+    async def test_can_keep_selected_duplicate_transactions(self):
+        clear_database()
+        file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount,Account\n2026-07-01,Coffee,4.25,Visa\n"))
+        await upload_statement(file)
+
+        file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount,Account\n2026-07-01,Coffee,4.25,Visa\n"))
+        response = await upload_statement(file)
+        duplicate_id = response.duplicates[0]["id"]
+
+        resolution = resolve_duplicate_statement_rows(
+            response.duplicate_batch_id,
+            DuplicateImportResolutionRequest(keep_duplicate_ids=[duplicate_id]),
+        )
+
+        self.assertEqual(resolution.imported_duplicates, 1)
+        with Session(engine) as session:
+            self.assertEqual(len(session.query(Transaction).all()), 2)
+
     async def test_upload_rejects_pdf_for_now(self):
         file = UploadFile(filename="statement.pdf", file=BytesIO(b"%PDF"))
 
@@ -84,12 +139,39 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
         clear_database()
         file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount\n2026-07-01,Coffee,4.25\n"))
         await upload_statement(file)
+        categorize_merchant(CategorizeMerchantRequest(merchant_key="COFFEE", category="Coffee"))
 
         response = clear_transactions()
 
         self.assertEqual(response.status, "cleared")
         self.assertEqual(response.deleted_transactions, 1)
-        self.assertEqual(transaction_categories().categories, [])
+        self.assertEqual(transaction_categories().categories, ["Coffee"])
+
+    async def test_merchant_category_rules_persist_after_clearing_transactions(self):
+        clear_database()
+        file = UploadFile(
+            filename="statement.csv",
+            file=BytesIO(b"Date,Description,Amount\n2026-07-01,POS STARBUCKS 123,4.25\n"),
+        )
+        await upload_statement(file)
+        categorize_merchant(CategorizeMerchantRequest(merchant_key="STARBUCKS", category="Coffee"))
+
+        clear_transactions()
+        self.assertEqual(transaction_categories().categories, ["Coffee"])
+        details = transaction_category_details()
+        self.assertEqual(details.categories[0].name, "Coffee")
+        self.assertEqual(details.categories[0].merchant_groups, [])
+
+        file = UploadFile(
+            filename="statement.csv",
+            file=BytesIO(b"Date,Description,Amount\n2026-07-02,STARBUCKS 456,5.00\n"),
+        )
+        await upload_statement(file)
+
+        self.assertEqual(categorization_suggestions().total, 0)
+        summary = transaction_category_summary()
+        self.assertEqual(summary.categories[0].name, "Coffee")
+        self.assertEqual(summary.categories[0].transaction_count, 1)
 
     async def test_clear_transaction_categories_resets_categories_without_deleting_transactions(self):
         clear_database()
@@ -107,7 +189,7 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status, "cleared")
         self.assertEqual(response.updated_transactions, 1)
-        self.assertEqual(transaction_categories().categories, [])
+        self.assertEqual(transaction_categories().categories, ["Coffee"])
         self.assertEqual(categorization_suggestions().total, 1)
 
     async def test_categorizes_suggested_merchant_group(self):
@@ -195,6 +277,72 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, "removed")
         self.assertEqual(response.updated_transactions, 1)
         self.assertEqual(transaction_categories().categories, [])
+
+    async def test_category_details_orders_merchant_groups_by_transaction_count(self):
+        clear_database()
+        file = UploadFile(
+            filename="statement.csv",
+            file=BytesIO(
+                b"Date,Description,Amount\n"
+                b"2026-07-01,POS STARBUCKS 123,4.25\n"
+                b"2026-07-02,STARBUCKS 456,5.00\n"
+                b"2026-07-03,GROCERY MART,18.00\n"
+            ),
+        )
+        await upload_statement(file)
+
+        categorize_merchant(CategorizeMerchantRequest(merchant_key="STARBUCKS", category="Food"))
+        categorize_merchant(CategorizeMerchantRequest(merchant_key="GROCERY MART", category="Food"))
+
+        details = transaction_category_details()
+        food_category = next(category for category in details.categories if category.name == "Food")
+
+        self.assertEqual(
+            [group.merchant_key for group in food_category.merchant_groups],
+            ["STARBUCKS", "GROCERY MART"],
+        )
+
+    async def test_category_dashboard_combines_category_data(self):
+        clear_database()
+        file = UploadFile(
+            filename="statement.csv",
+            file=BytesIO(
+                b"Date,Description,Amount\n"
+                b"2026-07-01,POS STARBUCKS 123,4.25\n"
+                b"2026-07-02,STARBUCKS 456,5.00\n"
+                b"2026-07-03,GROCERY MART,18.00\n"
+            ),
+        )
+        await upload_statement(file)
+        categorize_merchant(CategorizeMerchantRequest(merchant_key="STARBUCKS", category="Coffee"))
+
+        dashboard = transaction_category_dashboard()
+
+        self.assertEqual(dashboard.categories, ["Coffee"])
+        self.assertEqual(dashboard.category_summary[0].transaction_count, 2)
+        self.assertEqual(dashboard.category_details[0].merchant_groups[0].merchant_key, "STARBUCKS")
+        self.assertEqual(dashboard.uncategorized_groups[0].merchant_key, "GROCERY MART")
+
+    async def test_uncategorized_details_order_groups_by_count_then_recency(self):
+        clear_database()
+        file = UploadFile(
+            filename="statement.csv",
+            file=BytesIO(
+                b"Date,Description,Amount\n"
+                b"2026-07-01,OLDER SINGLE,4.25\n"
+                b"2026-07-20,RECENT SINGLE,5.00\n"
+                b"2026-06-01,FREQUENT SHOP,6.00\n"
+                b"2026-06-02,FREQUENT SHOP,7.00\n"
+            ),
+        )
+        await upload_statement(file)
+
+        details = transaction_category_details()
+
+        self.assertEqual(
+            [group.merchant_key for group in details.uncategorized_groups],
+            ["FREQUENT SHOP", "RECENT SINGLE", "OLDER SINGLE"],
+        )
 
 
 if __name__ == "__main__":

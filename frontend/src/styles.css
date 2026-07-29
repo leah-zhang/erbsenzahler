@@ -165,12 +165,86 @@ h2 {
   margin-bottom: 16px;
 }
 
+.amount-sign-panel {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  color: #34444b;
+  font-weight: 800;
+}
+
+.segmented-control {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(23, 32, 38, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.segmented-control button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: transparent;
+  color: #516067;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.segmented-control button.active {
+  background: #172026;
+  color: #ffffff;
+}
+
 .categorization-panel {
   display: grid;
   gap: 16px;
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid rgba(23, 32, 38, 0.1);
+}
+
+.duplicate-review-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(23, 32, 38, 0.1);
+}
+
+.duplicate-row-list {
+  display: grid;
+  gap: 8px;
+}
+
+.duplicate-row {
+  display: grid;
+  grid-template-columns: auto 92px minmax(0, 1fr) minmax(110px, 0.35fr) 86px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(23, 32, 38, 0.1);
+  border-radius: 8px;
+  background: rgba(247, 250, 247, 0.86);
+  color: #34444b;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.duplicate-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #517062;
+}
+
+.duplicate-row strong,
+.duplicate-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .merchant-list {
@@ -446,6 +520,53 @@ h2 {
   line-height: 1.7;
 }
 
+.bank-download-list,
+.automation-status-list {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.bank-download-group,
+.automation-status-row {
+  border: 1px solid rgba(236, 241, 237, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.bank-download-group {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.bank-download-heading,
+.automation-status-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bank-download-heading strong,
+.automation-status-row span {
+  color: #ffffff;
+}
+
+.bank-download-heading small,
+.automation-status-row small {
+  color: #c9d5d2;
+  font-weight: 800;
+}
+
+.bank-account-row {
+  color: #ecf1ed;
+}
+
+.automation-status-row {
+  padding: 12px 14px;
+}
+
 .status-panel {
   grid-column: 1 / -1;
   background: #fffaf1;
@@ -565,7 +686,7 @@ h2 {
 
 .account-year-panel > summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
   gap: 16px;
   align-items: center;
   padding: 14px;
@@ -601,10 +722,23 @@ h2 {
 }
 
 .account-table-toggles {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
   padding: 0 14px 14px;
+}
+
+.account-toggle-options,
+.account-column-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.account-column-actions {
+  justify-content: flex-end;
 }
 
 .account-table-toggles label {
@@ -622,6 +756,18 @@ h2 {
   height: 16px;
   margin: 0;
   accent-color: #517062;
+}
+
+.account-table-toggles button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid #172026;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172026;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .account-values-heading button,
@@ -688,6 +834,49 @@ h2 {
   color: #517062;
   font-size: 0.78rem;
   font-weight: 900;
+}
+
+.account-column-heading {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 128px;
+}
+
+.account-values-table .account-column-name-input {
+  min-width: 128px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid rgba(23, 32, 38, 0.22);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172026;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.account-values-table .account-column-heading button,
+.account-values-table .account-column-edit-actions button {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  color: #8f2d2d;
+}
+
+.account-values-table .account-column-edit-actions button {
+  color: #2767a8;
+}
+
+.account-values-table .account-column-heading svg,
+.account-values-table .account-column-edit-actions svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .account-values-table input {
@@ -775,8 +964,31 @@ h2 {
   align-items: center;
 }
 
+.account-row-actions button {
+  width: 30px;
+  padding: 0;
+  background: transparent;
+  color: #172026;
+}
+
 .account-row-actions button:first-child {
-  background: #172026;
+  background: transparent;
+  color: #2767a8;
+}
+
+.account-row-actions button:last-child {
+  background: transparent;
+  color: #8f2d2d;
+}
+
+.account-row-actions svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .category-list {
@@ -829,8 +1041,8 @@ h2 {
 
 .category-dropdown-body {
   display: grid;
-  gap: 10px;
-  padding: 0 14px 14px;
+  gap: 8px;
+  padding: 0 12px 12px;
 }
 
 .uncategorized-dropdown {
@@ -906,9 +1118,9 @@ h2 {
 .merchant-group-dropdown > summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.48fr);
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  padding: 12px;
+  padding: 8px 10px;
 }
 
 .merchant-group-dropdown summary strong,
@@ -927,15 +1139,15 @@ h2 {
 }
 
 .merchant-group-dropdown summary span {
-  margin-top: 4px;
+  margin-top: 2px;
   color: #68767a;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
 .merchant-group-dropdown select {
   min-width: 0;
-  height: 40px;
+  height: 34px;
   padding: 0 10px;
   border: 1px solid rgba(23, 32, 38, 0.16);
   border-radius: 8px;
@@ -947,7 +1159,7 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.6fr) 84px;
   gap: 12px;
-  align-items: start;
+  align-items: center;
   padding: 12px;
   border: 1px solid rgba(23, 32, 38, 0.1);
   border-radius: 8px;
@@ -955,7 +1167,8 @@ h2 {
 }
 
 .batch-category-toolbar strong,
-.batch-category-toolbar span {
+.batch-category-toolbar span,
+.batch-category-toolbar small {
   display: block;
 }
 
@@ -964,14 +1177,36 @@ h2 {
 }
 
 .batch-category-toolbar span {
-  margin-top: 4px;
   color: #68767a;
   font-size: 0.82rem;
   font-weight: 800;
 }
 
+.batch-category-toolbar small {
+  margin-top: 4px;
+  color: #68767a;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.select-all-merchants {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: #172026;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.select-all-merchants input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #517062;
+}
+
 .clear-selection-button {
-  min-height: 40px;
+  min-height: 34px;
   border-radius: 8px;
   background: #d96c4a;
   color: #ffffff;
@@ -987,8 +1222,8 @@ h2 {
 .selectable-merchant-heading {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+  gap: 10px;
+  align-items: center;
 }
 
 .merchant-select {
@@ -1011,8 +1246,8 @@ h2 {
 
 .merchant-chip-list {
   display: grid;
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 6px;
+  padding: 0 10px 10px;
 }
 
 .merchant-chip {
@@ -1020,7 +1255,7 @@ h2 {
   grid-template-columns: minmax(0, 1fr) 88px;
   gap: 10px;
   align-items: center;
-  padding: 10px;
+  padding: 8px;
   border-radius: 8px;
   background: #f7faf7;
 }
@@ -1035,7 +1270,7 @@ h2 {
 }
 
 .merchant-chip button {
-  min-height: 36px;
+  min-height: 32px;
   border-radius: 8px;
   background: #8f2d2d;
   color: #ffffff;
@@ -1045,6 +1280,39 @@ h2 {
 
 .trend-panel {
   grid-column: 1 / -1;
+}
+
+.analytics-chart-heading {
+  display: flex;
+  gap: 16px;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.analytics-chart-controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.analytics-chart-controls label {
+  display: grid;
+  gap: 6px;
+  color: #68767a;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.analytics-chart-controls select {
+  min-width: 150px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(23, 32, 38, 0.16);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172026;
+  font-weight: 800;
 }
 
 .bar-list {
@@ -1183,6 +1451,14 @@ h2 {
 
   .maintenance-actions {
     grid-template-columns: 1fr;
+  }
+
+  .account-table-toggles {
+    grid-template-columns: 1fr;
+  }
+
+  .account-column-actions {
+    justify-content: flex-start;
   }
 }
 

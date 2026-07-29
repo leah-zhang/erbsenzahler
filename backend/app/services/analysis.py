@@ -27,7 +27,12 @@ def _format_short_date(value: date) -> str:
     return f"{value.strftime('%b')} {value.day}"
 
 
-def summarize_transactions(transactions: List[dict], as_of: date | None = None) -> dict:
+def summarize_transactions(
+    transactions: List[dict],
+    as_of: date | None = None,
+    weekly_days: int = 90,
+    weekly_category: str | None = None,
+) -> dict:
     spending_transactions = [
         item for item in transactions
         if item["amount"] > 0
@@ -120,9 +125,13 @@ def summarize_transactions(transactions: List[dict], as_of: date | None = None) 
         for category in category_spend[:5]
     ]
 
-    weekly_start = as_of - timedelta(days=89)
+    weekly_days = max(7, min(weekly_days, 730))
+    weekly_start = as_of - timedelta(days=weekly_days - 1)
     weekly_groups: dict[date, list[dict]] = {}
+    normalized_weekly_category = (weekly_category or "").strip()
     for item in spending_transactions:
+        if normalized_weekly_category and item["category"] != normalized_weekly_category:
+            continue
         transaction_date = datetime.strptime(item["date"], "%Y-%m-%d").date()
         if weekly_start <= transaction_date <= as_of:
             week_start = transaction_date - timedelta(days=transaction_date.weekday())

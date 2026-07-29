@@ -13,18 +13,18 @@ class StatementAutomationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(statement_automation, "Thread", return_value=thread) as thread_factory:
                 result = statement_automation.start_download_flow(
-                    target_url="https://example.com",
                     download_dir=str(Path(tmpdir) / "downloads"),
                 )
 
         self.assertEqual(result["status"], "queued")
-        self.assertEqual(result["target_url"], "https://example.com")
+        self.assertEqual(result["download_dir"], str(Path(tmpdir) / "downloads"))
+        self.assertEqual([account["account_id"] for account in result["accounts"]], ["cibc-visa", "cibc-chequing"])
         self.assertIn("Browser automation started", result["message"])
         thread_factory.assert_called_once()
         _, kwargs = thread_factory.call_args
         self.assertEqual(kwargs["target"], statement_automation._run_statement_download_flow)
         self.assertEqual(kwargs["args"][0], result["job_id"])
-        self.assertEqual(kwargs["args"][1], "https://example.com")
+        self.assertEqual(kwargs["args"][1][0][0].id, "cibc")
         self.assertEqual(kwargs["args"][2], str(Path(tmpdir) / "downloads"))
         self.assertFalse(kwargs["args"][3].is_set())
         self.assertTrue(kwargs["daemon"])
@@ -34,13 +34,23 @@ class StatementAutomationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(statement_automation, "Thread", side_effect=RuntimeError("thread failed")):
                 result = statement_automation.start_download_flow(
-                    target_url="https://example.com",
                     download_dir=str(Path(tmpdir) / "downloads"),
                 )
 
         self.assertEqual(result["status"], "blocked")
         self.assertIn("thread failed", result["message"])
-        self.assertEqual(result["target_url"], "https://example.com")
+        self.assertEqual(result["download_dir"], str(Path(tmpdir) / "downloads"))
+
+    def test_returns_download_profiles(self):
+        result = statement_automation.available_download_profiles()
+
+        self.assertEqual(result["banks"][0]["id"], "cibc")
+        self.assertEqual(result["banks"][0]["accounts"][0]["id"], "cibc-visa")
+        simplii_profile = next(bank for bank in result["banks"] if bank["id"] == "simplii")
+        self.assertEqual(
+            [account["id"] for account in simplii_profile["accounts"]],
+            ["simplii-chequing", "simplii-savings", "simplii-visa"],
+        )
 
     def test_continue_download_flow_signals_waiting_job(self):
         continue_event = Mock()
@@ -48,8 +58,10 @@ class StatementAutomationTests(unittest.TestCase):
         with statement_automation._automation_jobs_lock:
             statement_automation._automation_jobs["job-1"] = {
                 "continue_event": continue_event,
-                "target_url": "https://example.com",
+                "status": "waiting_for_login",
+                "message": "Waiting",
                 "download_dir": "downloads",
+                "accounts": [],
             }
 
         result = statement_automation.continue_download_flow("job-1")
