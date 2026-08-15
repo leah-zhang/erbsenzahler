@@ -82,6 +82,18 @@ function investmentContributions(row) {
   return Object.values(row.contributions || {}).reduce((total, value) => total + numericValue(value), 0);
 }
 
+function uniqueColumnNames(names) {
+  const normalizedNames = new Set();
+  return names.filter((name) => {
+    const normalizedName = name.trim().toLowerCase();
+    if (!normalizedName || normalizedNames.has(normalizedName)) {
+      return false;
+    }
+    normalizedNames.add(normalizedName);
+    return true;
+  });
+}
+
 function PencilIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -318,13 +330,13 @@ export function AccountValuesTab({
             const yearRows = rowsByYear[year] || [];
             const hiddenColumnSet = new Set(hiddenColumns.filter((columnKey) => columnKey.startsWith(`${year}:`)));
             const isEditingColumns = editingColumnYears.includes(year);
-            const accountColumns = Array.from(new Set([
+            const accountColumns = uniqueColumnNames([
               ...(defaultAccountColumnsByYear[year] || []),
               ...yearRows.flatMap((row) => Object.keys(row.accounts || {})),
-            ])).filter((accountName) => !hiddenColumnSet.has(`${year}:accounts:${accountName}`));
-            const contributionNames = Array.from(new Set(
+            ]).filter((accountName) => !hiddenColumnSet.has(`${year}:accounts:${accountName}`));
+            const contributionNames = uniqueColumnNames(
               yearRows.flatMap((row) => Object.keys(row.contributions || {})),
-            )).filter((contributionName) => !hiddenColumnSet.has(`${year}:contributions:${contributionName}`));
+            ).filter((contributionName) => !hiddenColumnSet.has(`${year}:contributions:${contributionName}`));
             const hasContributions = contributionNames.length > 0;
             const showContributions = Boolean(expandedSections[year]?.contributions);
             const showAccounts = Boolean(expandedSections[year]?.accounts);
@@ -426,7 +438,7 @@ export function AccountValuesTab({
                               : '';
 
                           return (
-                          <th key={label}>
+                          <th key={key}>
                             {['actual', 'diff', 'cash', 'vsLastMonth'].includes(key) ? (
                               <span
                                 className="account-tooltip"
@@ -444,6 +456,7 @@ export function AccountValuesTab({
                                 {isEditingColumns ? (
                                   <>
                                     <input
+                                      key={`${year}:${columnSection}:${columnName}`}
                                       className="account-column-name-input"
                                       aria-label={`Rename ${isContributionColumn ? 'investment contribution' : 'account'} column`}
                                       defaultValue={columnName}

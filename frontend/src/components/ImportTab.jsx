@@ -13,7 +13,6 @@ const mappingRoles = [
 export function ImportTab({
   amountSign,
   automationAccountStatuses,
-  automationJobId,
   automationProfiles,
   columnMapping,
   columnOptions,
@@ -34,7 +33,6 @@ export function ImportTab({
   isClearingTransactions,
   isUploading,
   onAutomation,
-  onAutomationContinue,
   onApplyCategory,
   onCategorizationPageChange,
   onClearCategories,
@@ -44,14 +42,12 @@ export function ImportTab({
   onAmountSignChange,
   onHeaderChange,
   onResolveDuplicateRows,
-  onToggleAutomationAccount,
   onToggleDuplicateRow,
   onUpdateColumnRole,
   onUpload,
   previewGridStyle,
   previewRows,
   selectedFile,
-  selectedAutomationAccounts,
   status,
 }) {
   const getColumnRole = (columnIndex) => {
@@ -188,10 +184,10 @@ export function ImportTab({
       <div className="control-panel accent-panel">
         <div className="panel-heading">
           <p className="eyebrow">Browser automation</p>
-          <h2>Bank downloads</h2>
+          <h2>Simplii browser</h2>
         </div>
         <p>
-          Choose accounts by bank. Login stays manual; downloads run after you continue.
+          Opens the Simplii login page in your regular Chrome profile. Close Chrome first so the profile is available.
         </p>
 
         <div className="bank-download-list">
@@ -199,21 +195,11 @@ export function ImportTab({
             <div className="bank-download-group" key={bank.id}>
               <div className="bank-download-heading">
                 <strong>{bank.name}</strong>
-                <small>{(bank.accounts || []).length} configured accounts</small>
+                <small>Chrome profile browser launch</small>
               </div>
-              {(bank.accounts || []).map((account) => (
-                <label className="toggle-row bank-account-row" key={account.id}>
-                  <input
-                    type="checkbox"
-                    checked={(selectedAutomationAccounts[bank.id] || []).includes(account.id)}
-                    onChange={() => onToggleAutomationAccount(bank.id, account.id)}
-                  />
-                  <span>{account.label}</span>
-                </label>
-              ))}
             </div>
           )) : (
-            <p className="empty-state">No bank download profiles are configured.</p>
+            <p className="empty-state">No browser launch profile is configured.</p>
           )}
         </div>
 
@@ -229,10 +215,7 @@ export function ImportTab({
         ) : null}
 
         <button className="secondary-button" type="button" onClick={onAutomation} disabled={isAutomating}>
-          {isAutomating ? 'Starting...' : 'Start selected downloads'}
-        </button>
-        <button className="secondary-button" type="button" onClick={onAutomationContinue} disabled={isAutomating || !automationJobId}>
-          Continue after login
+          {isAutomating ? 'Opening...' : 'Open Simplii in Chrome'}
         </button>
       </div>
 

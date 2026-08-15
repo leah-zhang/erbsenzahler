@@ -3,7 +3,7 @@
 A monthly finance tracker MVP with:
 - a FastAPI backend for statement ingestion and analysis,
 - a React frontend for dashboards and monthly reporting,
-- a Playwright-based workflow for browser-driven statement downloads after manual login.
+- a Chrome helper that opens the Simplii login page in your regular Chrome profile.
 
 ## Project structure
 - backend/: FastAPI application and statement processing services
@@ -22,5 +22,5 @@ A monthly finance tracker MVP with:
 3. npm run dev
 
 ## Notes
-- The automation flow is intentionally paused for manual login to keep the process secure.
+- The Simplii browser helper opens the login page in Chrome. It does not click bank controls, download statements, use remote debugging, or store credentials.
 - The initial implementation focuses on file intake and a clean project scaffold.

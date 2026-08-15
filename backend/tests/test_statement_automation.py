@@ -1,81 +1,60 @@
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 from app.services import statement_automation
 
 
 class StatementAutomationTests(unittest.TestCase):
-    def test_queues_browser_launch(self):
-        thread = Mock()
+    def test_open_in_chrome_uses_regular_profile(self):
+        with patch.object(statement_automation, "_chrome_executable_path", return_value="chrome.exe"):
+            with patch.object(statement_automation, "_chrome_user_data_dir", return_value="User Data"):
+                with patch.object(statement_automation, "_chrome_profile_directory", return_value="Default"):
+                    with patch.object(statement_automation.subprocess, "Popen") as popen:
+                        statement_automation._open_in_chrome("http://localhost:5173")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.object(statement_automation, "Thread", return_value=thread) as thread_factory:
-                result = statement_automation.start_download_flow(
-                    download_dir=str(Path(tmpdir) / "downloads"),
-                )
-
-        self.assertEqual(result["status"], "queued")
-        self.assertEqual(result["download_dir"], str(Path(tmpdir) / "downloads"))
-        self.assertEqual([account["account_id"] for account in result["accounts"]], ["cibc-visa", "cibc-chequing"])
-        self.assertIn("Browser automation started", result["message"])
-        thread_factory.assert_called_once()
-        _, kwargs = thread_factory.call_args
-        self.assertEqual(kwargs["target"], statement_automation._run_statement_download_flow)
-        self.assertEqual(kwargs["args"][0], result["job_id"])
-        self.assertEqual(kwargs["args"][1][0][0].id, "cibc")
-        self.assertEqual(kwargs["args"][2], str(Path(tmpdir) / "downloads"))
-        self.assertFalse(kwargs["args"][3].is_set())
-        self.assertTrue(kwargs["daemon"])
-        thread.start.assert_called_once_with()
-
-    def test_returns_blocked_status_when_browser_launch_cannot_start(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.object(statement_automation, "Thread", side_effect=RuntimeError("thread failed")):
-                result = statement_automation.start_download_flow(
-                    download_dir=str(Path(tmpdir) / "downloads"),
-                )
-
-        self.assertEqual(result["status"], "blocked")
-        self.assertIn("thread failed", result["message"])
-        self.assertEqual(result["download_dir"], str(Path(tmpdir) / "downloads"))
-
-    def test_returns_download_profiles(self):
-        result = statement_automation.available_download_profiles()
-
-        self.assertEqual(result["banks"][0]["id"], "cibc")
-        self.assertEqual(result["banks"][0]["accounts"][0]["id"], "cibc-visa")
-        simplii_profile = next(bank for bank in result["banks"] if bank["id"] == "simplii")
-        self.assertEqual(
-            [account["id"] for account in simplii_profile["accounts"]],
-            ["simplii-chequing", "simplii-savings", "simplii-visa"],
+        popen.assert_called_once_with(
+            [
+                "chrome.exe",
+                "--user-data-dir=User Data",
+                "--profile-directory=Default",
+                "http://localhost:5173",
+            ],
+            close_fds=True,
         )
 
-    def test_continue_download_flow_signals_waiting_job(self):
-        continue_event = Mock()
+    def test_opens_simplii_in_chrome(self):
+        with patch.object(statement_automation, "_open_in_chrome") as open_in_chrome:
+            result = statement_automation.start_download_flow()
 
-        with statement_automation._automation_jobs_lock:
-            statement_automation._automation_jobs["job-1"] = {
-                "continue_event": continue_event,
-                "status": "waiting_for_login",
-                "message": "Waiting",
-                "download_dir": "downloads",
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["accounts"], [])
+        self.assertIn("Simplii", result["message"])
+        open_in_chrome.assert_called_once_with(statement_automation.SIMPLII_LOGIN_URL)
+
+    def test_returns_blocked_status_when_simplii_cannot_open(self):
+        with patch.object(statement_automation, "_open_in_chrome", side_effect=RuntimeError("profile locked")):
+            result = statement_automation.start_download_flow()
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("profile locked", result["message"])
+        self.assertEqual(result["accounts"], [])
+
+    def test_returns_simplii_launch_profile(self):
+        result = statement_automation.available_download_profiles()
+
+        self.assertEqual(result["banks"], [
+            {
+                "id": "simplii",
+                "name": "Simplii Financial",
                 "accounts": [],
             }
+        ])
 
+    def test_continue_download_flow_is_noop(self):
         result = statement_automation.continue_download_flow("job-1")
 
-        self.assertEqual(result["status"], "continuing")
-        continue_event.set.assert_called_once_with()
-
-        with statement_automation._automation_jobs_lock:
-            statement_automation._automation_jobs.pop("job-1", None)
-
-    def test_continue_download_flow_handles_missing_job(self):
-        result = statement_automation.continue_download_flow("missing")
-
-        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["accounts"], [])
 
     def test_prepares_proactor_event_loop_on_windows(self):
         policy = Mock()

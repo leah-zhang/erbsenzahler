@@ -1,3 +1,5 @@
+transactions_backups/
+import.csv
 *.db
 
 # Byte-compiled / optimized / DLL files

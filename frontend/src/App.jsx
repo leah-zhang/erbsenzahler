@@ -46,9 +46,7 @@ function App() {
   const [isClearingTransactions, setIsClearingTransactions] = useState(false);
   const [isClearingCategories, setIsClearingCategories] = useState(false);
   const [isAutomating, setIsAutomating] = useState(false);
-  const [automationJobId, setAutomationJobId] = useState(null);
   const [automationProfiles, setAutomationProfiles] = useState([]);
-  const [selectedAutomationAccounts, setSelectedAutomationAccounts] = useState({});
   const [automationAccountStatuses, setAutomationAccountStatuses] = useState([]);
   const [csvPreview, setCsvPreview] = useState([]);
   const [duplicateImportBatch, setDuplicateImportBatch] = useState(null);
@@ -100,29 +98,6 @@ function App() {
     loadSummary();
   }, [analyticsTimeframeDays, analyticsCategory]);
 
-  useEffect(() => {
-    if (!automationJobId) {
-      return undefined;
-    }
-
-    const intervalId = window.setInterval(async () => {
-      try {
-        const response = await api.get(`/statements/download/${automationJobId}`);
-        setAutomationAccountStatuses(response.data.accounts || []);
-        if (response.data.message) {
-          setStatus(response.data.message);
-        }
-        if (['completed', 'failed', 'not_found'].includes(response.data.status)) {
-          setAutomationJobId(null);
-        }
-      } catch (error) {
-        setAutomationJobId(null);
-      }
-    }, 2500);
-
-    return () => window.clearInterval(intervalId);
-  }, [automationJobId]);
-
   const normalizeAccountSnapshot = (snapshot) => ({
     id: snapshot.id,
     year: snapshot.year,
@@ -173,17 +148,8 @@ function App() {
       const response = await api.get('/statements/download/profiles');
       const banks = response.data.banks || [];
       setAutomationProfiles(banks);
-      setSelectedAutomationAccounts((current) => {
-        if (Object.keys(current).length) {
-          return current;
-        }
-        return Object.fromEntries(
-          banks.map((bank) => [bank.id, (bank.accounts || []).map((account) => account.id)]),
-        );
-      });
     } catch (error) {
       setAutomationProfiles([]);
-      setSelectedAutomationAccounts({});
     }
   };
 
@@ -543,67 +509,16 @@ function App() {
     }
   };
 
-  const selectedAutomationPlan = () => (
-    automationProfiles
-      .map((bank) => ({
-        bank_id: bank.id,
-        account_ids: selectedAutomationAccounts[bank.id] || [],
-      }))
-      .filter((bank) => bank.account_ids.length)
-  );
-
-  const handleToggleAutomationAccount = (bankId, accountId) => {
-    setSelectedAutomationAccounts((current) => {
-      const selectedForBank = current[bankId] || [];
-      const nextSelectedForBank = selectedForBank.includes(accountId)
-        ? selectedForBank.filter((selectedAccountId) => selectedAccountId !== accountId)
-        : [...selectedForBank, accountId];
-
-      return {
-        ...current,
-        [bankId]: nextSelectedForBank,
-      };
-    });
-  };
-
   const handleAutomation = async () => {
-    const banks = selectedAutomationPlan();
-    if (!banks.length) {
-      setStatus('Select at least one account to download.');
-      return;
-    }
-
     setIsAutomating(true);
-    setStatus('Starting browser automation...');
+    setStatus('Opening Simplii in Chrome...');
 
     try {
-      const response = await api.post('/statements/download', { banks });
-      setAutomationJobId(response.data.job_id || null);
+      const response = await api.post('/statements/download', { banks: [{ bank_id: 'simplii', account_ids: [] }] });
       setAutomationAccountStatuses(response.data.accounts || []);
-      setStatus(response.data.message || 'Automation flow could not be started.');
+      setStatus(response.data.message || 'Simplii browser flow could not be started.');
     } catch (error) {
-      const detail = error?.response?.data?.message || error?.message || 'Automation flow could not be started.';
-      setStatus(detail);
-    } finally {
-      setIsAutomating(false);
-    }
-  };
-
-  const handleAutomationContinue = async () => {
-    if (!automationJobId) {
-      setStatus('Start the download flow before continuing automation.');
-      return;
-    }
-
-    setIsAutomating(true);
-    setStatus('Continuing browser automation...');
-
-    try {
-      const response = await api.post(`/statements/download/${automationJobId}/continue`);
-      setStatus(response.data.message || 'Automation flow continued.');
-      setAutomationAccountStatuses(response.data.accounts || []);
-    } catch (error) {
-      const detail = error?.response?.data?.message || error?.message || 'Automation flow could not continue.';
+      const detail = error?.response?.data?.message || error?.message || 'Simplii browser flow could not be started.';
       setStatus(detail);
     } finally {
       setIsAutomating(false);
@@ -882,7 +797,7 @@ function App() {
           ...row,
           [valueKey]: {
             ...row[valueKey],
-            [columnName]: row[valueKey]?.[columnName] ?? '0',
+            [columnName]: '0',
           },
         }
         : row
@@ -1098,7 +1013,6 @@ function App() {
 
       {activeTab === 'import' ? (
         <ImportTab
-          automationJobId={automationJobId}
           automationProfiles={automationProfiles}
           automationAccountStatuses={automationAccountStatuses}
           columnMapping={columnMapping}
@@ -1121,8 +1035,6 @@ function App() {
           isClearingTransactions={isClearingTransactions}
           isUploading={isUploading}
           onAutomation={handleAutomation}
-          onAutomationContinue={handleAutomationContinue}
-          onToggleAutomationAccount={handleToggleAutomationAccount}
           onApplyCategory={handleApplyCategory}
           onCategorizationPageChange={handleCategorizationPageChange}
           onClearCategories={handleClearCategories}
@@ -1138,7 +1050,6 @@ function App() {
           previewGridStyle={previewGridStyle}
           previewRows={previewRows}
           selectedFile={selectedFile}
-          selectedAutomationAccounts={selectedAutomationAccounts}
           status={status}
         />
       ) : activeTab === 'categories' ? (
