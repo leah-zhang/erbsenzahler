@@ -505,68 +505,6 @@ h2 {
   transform: none;
 }
 
-.accent-panel {
-  background: #213239;
-  color: #ecf1ed;
-}
-
-.accent-panel h2,
-.accent-panel .eyebrow {
-  color: #ffffff;
-}
-
-.accent-panel p:not(.eyebrow) {
-  color: #c9d5d2;
-  line-height: 1.7;
-}
-
-.bank-download-list,
-.automation-status-list {
-  display: grid;
-  gap: 12px;
-  margin: 18px 0;
-}
-
-.bank-download-group,
-.automation-status-row {
-  border: 1px solid rgba(236, 241, 237, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.bank-download-group {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-}
-
-.bank-download-heading,
-.automation-status-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.bank-download-heading strong,
-.automation-status-row span {
-  color: #ffffff;
-}
-
-.bank-download-heading small,
-.automation-status-row small {
-  color: #c9d5d2;
-  font-weight: 800;
-}
-
-.bank-account-row {
-  color: #ecf1ed;
-}
-
-.automation-status-row {
-  padding: 12px 14px;
-}
-
 .status-panel {
   grid-column: 1 / -1;
   background: #fffaf1;
@@ -826,6 +764,58 @@ h2 {
   font-size: 0.78rem;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.account-values-table .account-parent-header {
+  padding: 5px 8px;
+  border-bottom-color: rgba(23, 32, 38, 0.12);
+  color: #26383a;
+  font-size: 0.68rem;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.account-values-table .account-parent-header-month,
+.account-values-table .account-parent-header-common,
+.account-values-table .account-parent-header-actions {
+  background: #e7eee9;
+}
+
+.account-values-table .account-parent-header-contributions {
+  background: #dcebdd;
+  color: #315d3f;
+}
+
+.account-values-table .account-parent-header-accounts {
+  background: #dbe8f3;
+  color: #2d5474;
+}
+
+.account-values-table th.account-contribution-column {
+  background: #edf6ee;
+}
+
+.account-values-table th.account-breakdown-column {
+  background: #edf5fb;
+}
+
+.account-values-table th:first-child,
+.account-values-table td:first-child {
+  position: sticky;
+  left: 0;
+  min-width: 118px;
+  box-shadow: 1px 0 0 rgba(23, 32, 38, 0.08);
+}
+
+.account-values-table th:first-child {
+  z-index: 3;
+}
+
+.account-values-table td:first-child {
+  z-index: 2;
+  background: #ffffff;
 }
 
 .account-values-table th small {
@@ -1377,6 +1367,7 @@ h2 {
 }
 
 .chart-tooltip-heading,
+.chart-tooltip-category-heading,
 .chart-tooltip-group-heading,
 .chart-tooltip-transaction {
   display: grid;
@@ -1392,15 +1383,34 @@ h2 {
 
 .chart-tooltip-heading span,
 .chart-tooltip-heading strong,
+.chart-tooltip-category-heading span,
+.chart-tooltip-category-heading strong,
 .chart-tooltip-group-heading span,
 .chart-tooltip-group-heading strong {
   color: #ffffff;
   font-weight: 900;
 }
 
+.chart-tooltip-category {
+  display: grid;
+  gap: 8px;
+}
+
+.chart-tooltip-category + .chart-tooltip-category {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.chart-tooltip-category-heading {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(95, 166, 142, 0.22);
+}
+
 .chart-tooltip-group {
   display: grid;
   gap: 6px;
+  padding-left: 8px;
 }
 
 .chart-tooltip-transaction span,

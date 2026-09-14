@@ -426,6 +426,21 @@ export function AccountValuesTab({
                 <div className="account-values-table-wrap">
                   <table className={`account-values-table${year === 2026 ? '' : ' compact-account-table'}`}>
                     <thead>
+                      <tr className="account-parent-header-row">
+                        <th className="account-parent-header account-parent-header-month" aria-hidden="true" />
+                        <th className="account-parent-header account-parent-header-common" colSpan={baseAccountValueColumns.length - 1} aria-hidden="true" />
+                        {showContributions && contributionNames.length ? (
+                          <th className="account-parent-header account-parent-header-contributions" colSpan={contributionNames.length}>
+                            Investment Contributions
+                          </th>
+                        ) : null}
+                        {showAccounts && accountColumns.length ? (
+                          <th className="account-parent-header account-parent-header-accounts" colSpan={accountColumns.length}>
+                            Accounts Breakdown
+                          </th>
+                        ) : null}
+                        <th className="account-parent-header account-parent-header-actions" aria-hidden="true" />
+                      </tr>
                       <tr>
                         {columns.map(([key, label]) => {
                           const isContributionColumn = key.startsWith('contribution:');
@@ -438,7 +453,10 @@ export function AccountValuesTab({
                               : '';
 
                           return (
-                          <th key={key}>
+                          <th
+                            className={isContributionColumn ? 'account-contribution-column' : isAccountColumn ? 'account-breakdown-column' : ''}
+                            key={key}
+                          >
                             {['actual', 'diff', 'cash', 'vsLastMonth'].includes(key) ? (
                               <span
                                 className="account-tooltip"

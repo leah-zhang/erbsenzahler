@@ -24,12 +24,6 @@ from app.models import (
 from app.services.analysis import summarize_transactions
 from app.services.categorization import build_merchant_groups, merchant_key
 from app.services.parser import StatementParseError, parse_statement
-from app.services.statement_automation import (
-    available_download_profiles,
-    continue_download_flow,
-    get_download_flow,
-    start_download_flow,
-)
 
 app = FastAPI(title="Finance Tracker API")
 create_db_and_tables()
@@ -231,15 +225,6 @@ class AccountValuesImportResponse(BaseModel):
     imported_entries: int
 
 
-class StatementDownloadBankRequest(BaseModel):
-    bank_id: str
-    account_ids: list[str] = PydanticField(default_factory=list)
-
-
-class StatementDownloadRequest(BaseModel):
-    banks: list[StatementDownloadBankRequest] = PydanticField(default_factory=list)
-
-
 ACCOUNT_VALUE_BASE_COLUMNS = {
     "month end",
     "projected",
@@ -436,6 +421,13 @@ def _transaction_payload_with_category(transaction: dict, merchant_rules: dict[s
     }
     payload["fingerprint"] = _transaction_fingerprint(payload)
     return payload
+
+
+def _effective_transaction_category(transaction: Transaction, merchant_rules: dict[str, str]) -> str:
+    category = transaction.category or "uncategorized"
+    if category == "uncategorized":
+        return merchant_rules.get(merchant_key(transaction.description), category)
+    return category
 
 
 def _add_transaction(session: Session, payload: dict) -> None:
@@ -660,13 +652,14 @@ def monthly_summary(
 ) -> MonthlySummaryResponse:
     with Session(engine) as session:
         transactions = session.query(Transaction).all()
+        merchant_rules = _merchant_category_rules(session)
 
     normalized_transactions = [
         {
             "date": transaction.date,
             "description": transaction.description,
             "amount": transaction.amount,
-            "category": transaction.category,
+            "category": _effective_transaction_category(transaction, merchant_rules),
         }
         for transaction in transactions
     ]
@@ -1223,32 +1216,3 @@ def clear_transaction_categories() -> ClearCategoriesResponse:
         status="cleared",
         updated_transactions=updated_transactions,
     )
-
-
-@app.get("/api/statements/download/profiles")
-def statement_download_profiles() -> dict:
-    return available_download_profiles()
-
-
-@app.post("/api/statements/download")
-def download_statements(request: StatementDownloadRequest | None = None) -> dict:
-    requested_banks = [
-        {
-            "bank_id": bank.bank_id,
-            "account_ids": bank.account_ids,
-        }
-        for bank in (request.banks if request else [])
-    ]
-    result = start_download_flow(requested_banks=requested_banks)
-    return result
-
-
-@app.get("/api/statements/download/{job_id}")
-def statement_download_status(job_id: str) -> dict:
-    return get_download_flow(job_id)
-
-
-@app.post("/api/statements/download/{job_id}/continue")
-def continue_statement_download(job_id: str) -> dict:
-    result = continue_download_flow(job_id)
-    return result

@@ -165,6 +165,44 @@ def summarize_transactions(
             )
 
         grouped_merchants.sort(key=lambda group: group["total"], reverse=True)
+        category_groups: dict[str, list[dict]] = {}
+        for item in items:
+            category_groups.setdefault(item["category"], []).append(item)
+
+        grouped_categories = []
+        for category_name, category_items in category_groups.items():
+            category_merchant_groups: dict[str, list[dict]] = {}
+            for item in category_items:
+                category_merchant_groups.setdefault(merchant_key(item["description"]), []).append(item)
+
+            grouped_category_merchants = []
+            for merchant_name, merchant_items in category_merchant_groups.items():
+                transactions = [
+                    {
+                        "date": item["date"],
+                        "description": item["description"],
+                        "amount": round(item["amount"], 2),
+                    }
+                    for item in sorted(merchant_items, key=lambda transaction: transaction["amount"], reverse=True)
+                ]
+                grouped_category_merchants.append(
+                    {
+                        "name": merchant_name,
+                        "total": round(sum(item["amount"] for item in merchant_items), 2),
+                        "transactions": transactions,
+                    }
+                )
+
+            grouped_category_merchants.sort(key=lambda group: group["total"], reverse=True)
+            grouped_categories.append(
+                {
+                    "name": category_name,
+                    "total": round(sum(item["amount"] for item in category_items), 2),
+                    "merchant_groups": grouped_category_merchants,
+                }
+            )
+
+        grouped_categories.sort(key=lambda group: group["total"], reverse=True)
         week_end = min(week_start + timedelta(days=6), as_of)
         weekly_breakdown.append(
             {
@@ -172,6 +210,7 @@ def summarize_transactions(
                 "label": f"{_format_short_date(week_start)} - {_format_short_date(week_end)}",
                 "total": round(sum(item["amount"] for item in items), 2),
                 "merchant_groups": grouped_merchants,
+                "category_groups": grouped_categories,
             }
         )
         week_start += timedelta(days=7)

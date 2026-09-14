@@ -35,3 +35,19 @@ export function renderTransactionGroups(groups) {
     );
   }).join('');
 }
+
+export function renderCategoryTransactionGroups(groups) {
+  if (!groups?.length) {
+    return renderTransactionGroups([]);
+  }
+
+  return groups.map((category) => (
+    `<div class="chart-tooltip-category">
+      <div class="chart-tooltip-category-heading">
+        <span>${escapeHtml(category.name)}</span>
+        <strong>${formatCurrency(category.total)}</strong>
+      </div>
+      ${renderTransactionGroups(category.merchant_groups)}
+    </div>`
+  )).join('');
+}

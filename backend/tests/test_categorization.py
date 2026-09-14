@@ -7,6 +7,13 @@ class CategorizationTests(unittest.TestCase):
     def test_merchant_key_groups_similar_descriptions(self):
         self.assertEqual(merchant_key("POS PURCHASE STARBUCKS #123 TORONTO"), "STARBUCKS")
         self.assertEqual(merchant_key("Debit Starbucks Toronto 456"), "STARBUCKS")
+        self.assertEqual(merchant_key("SQ *Starbucks Store 047 Toronto"), "STARBUCKS")
+        self.assertEqual(merchant_key("STARBUCKSSTORE1234"), "STARBUCKS")
+
+    def test_merchant_key_groups_tim_hortons_descriptions(self):
+        self.assertEqual(merchant_key("POS PURCHASE TIM HORTONS #123 TORONTO"), "TIM HORTONS")
+        self.assertEqual(merchant_key("Debit Tim Hortons Toronto 456"), "TIM HORTONS")
+        self.assertEqual(merchant_key("TIMHORTONSSTORE1234"), "TIM HORTONS")
 
     def test_merchant_key_groups_store_number_location_patterns(self):
         self.assertEqual(merchant_key("LCBO/RAO #685 TORONTO, O"), "LCBO RAO")

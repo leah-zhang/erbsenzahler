@@ -8,7 +8,7 @@ from sqlmodel import Session
 from app.models import MerchantCategoryRule, Statement, Transaction, engine
 from app.main import categorize_merchant, categorization_suggestions, clear_database, clear_transaction_categories
 from app.main import clear_transactions, rename_category
-from app.main import remove_merchant_from_category, transaction_categories, transaction_category_details
+from app.main import monthly_summary, remove_merchant_from_category, transaction_categories, transaction_category_details
 from app.main import transaction_category_dashboard, transaction_category_summary, upload_statement
 from app.main import (
     CategorizeMerchantRequest,
@@ -191,6 +191,18 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.updated_transactions, 1)
         self.assertEqual(transaction_categories().categories, ["Coffee"])
         self.assertEqual(categorization_suggestions().total, 1)
+
+    async def test_monthly_analytics_applies_saved_merchant_rules(self):
+        clear_database()
+        file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount\n2026-07-01,POS STARBUCKS 123,4.25\n"))
+        await upload_statement(file)
+        categorize_merchant(CategorizeMerchantRequest(merchant_key="STARBUCKS", category="Coffee"))
+        clear_transaction_categories()
+
+        summary = monthly_summary(weekly_days=90)
+
+        self.assertEqual(summary.top_categories[0]["name"], "Coffee")
+        self.assertEqual(summary.last_30_days["category_spend"], [])
 
     async def test_categorizes_suggested_merchant_group(self):
         clear_database()

@@ -60,6 +60,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(summary["weekly_breakdown"][12]["week"], "2026-07-27")
         self.assertEqual(summary["weekly_breakdown"][12]["total"], 10.00)
         self.assertEqual(summary["weekly_breakdown"][12]["merchant_groups"][0]["name"], "BUS PASS")
+        self.assertEqual(summary["weekly_breakdown"][12]["category_groups"][0]["name"], "transport")
+        self.assertEqual(summary["weekly_breakdown"][12]["category_groups"][0]["merchant_groups"][0]["name"], "BUS PASS")
 
     def test_summarizes_last_30_day_cards(self):
         summary = summarize_transactions(

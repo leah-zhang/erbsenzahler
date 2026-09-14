@@ -12,9 +12,6 @@ const emptyColumnMapping = {
   date: '',
   description: '',
   amount: '',
-  debit: '',
-  credit: '',
-  category: '',
   account: '',
 };
 
@@ -45,9 +42,6 @@ function App() {
   const [isRenamingCategory, setIsRenamingCategory] = useState(false);
   const [isClearingTransactions, setIsClearingTransactions] = useState(false);
   const [isClearingCategories, setIsClearingCategories] = useState(false);
-  const [isAutomating, setIsAutomating] = useState(false);
-  const [automationProfiles, setAutomationProfiles] = useState([]);
-  const [automationAccountStatuses, setAutomationAccountStatuses] = useState([]);
   const [csvPreview, setCsvPreview] = useState([]);
   const [duplicateImportBatch, setDuplicateImportBatch] = useState(null);
   const [duplicateRowsToKeep, setDuplicateRowsToKeep] = useState([]);
@@ -91,7 +85,6 @@ function App() {
   useEffect(() => {
     loadCategoryDashboard();
     loadAccountValues();
-    loadAutomationProfiles();
   }, []);
 
   useEffect(() => {
@@ -140,16 +133,6 @@ function App() {
       setAccountValueRows((response.data.snapshots || []).map(normalizeAccountSnapshot));
     } catch (error) {
       setAccountValueRows([]);
-    }
-  };
-
-  const loadAutomationProfiles = async () => {
-    try {
-      const response = await api.get('/statements/download/profiles');
-      const banks = response.data.banks || [];
-      setAutomationProfiles(banks);
-    } catch (error) {
-      setAutomationProfiles([]);
     }
   };
 
@@ -506,22 +489,6 @@ function App() {
       setStatus(detail);
     } finally {
       setIsCategorizing(false);
-    }
-  };
-
-  const handleAutomation = async () => {
-    setIsAutomating(true);
-    setStatus('Opening Simplii in Chrome...');
-
-    try {
-      const response = await api.post('/statements/download', { banks: [{ bank_id: 'simplii', account_ids: [] }] });
-      setAutomationAccountStatuses(response.data.accounts || []);
-      setStatus(response.data.message || 'Simplii browser flow could not be started.');
-    } catch (error) {
-      const detail = error?.response?.data?.message || error?.message || 'Simplii browser flow could not be started.';
-      setStatus(detail);
-    } finally {
-      setIsAutomating(false);
     }
   };
 
@@ -1013,8 +980,6 @@ function App() {
 
       {activeTab === 'import' ? (
         <ImportTab
-          automationProfiles={automationProfiles}
-          automationAccountStatuses={automationAccountStatuses}
           columnMapping={columnMapping}
           columnOptions={columnOptions}
           categoryOptions={categoryOptions}
@@ -1029,12 +994,10 @@ function App() {
           amountSign={amountSign}
           duplicateImportBatch={duplicateImportBatch}
           duplicateRowsToKeep={duplicateRowsToKeep}
-          isAutomating={isAutomating}
           isCategorizing={isCategorizing}
           isClearingCategories={isClearingCategories}
           isClearingTransactions={isClearingTransactions}
           isUploading={isUploading}
-          onAutomation={handleAutomation}
           onApplyCategory={handleApplyCategory}
           onCategorizationPageChange={handleCategorizationPageChange}
           onClearCategories={handleClearCategories}

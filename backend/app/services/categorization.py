@@ -66,6 +66,10 @@ def merchant_key(description: str) -> str:
         return "AMAZON"
     if re.search(r"\bAMAZON(?:\.CA)?\b", uppercase_description):
         return "AMAZON"
+    if "STARBUCKS" in compact_description:
+        return "Starbucks"
+    if "TIMHORTONS" in compact_description:
+        return "Tim Hortons"
     if re.search(r"^\s*PRESTO\b", uppercase_description):
         return "PRESTO"
     if re.search(r"^\s*SEPHORA\b", uppercase_description):
@@ -90,6 +94,10 @@ def merchant_key(description: str) -> str:
         return "Grab"
     if re.search(r"\bWAL\s*-?\s*MART\b", uppercase_description) or "WALMART" in compact_description:
         return "Walmart"
+    if "HEALTHYPLANET" in compact_description:
+            return "Healthly Planet"
+    if "NOFRILLS" in compact_description:
+                return "No Frills"
     if re.search(r"\bMC\s*DONALD'?S\b", uppercase_description) or "MCDONALDS" in compact_description:
         return "Mcdonalds"
     if "SHOPPERSDRUGMART" in compact_description:

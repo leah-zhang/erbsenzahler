@@ -4,16 +4,11 @@ const mappingRoles = [
   ['date', 'Date'],
   ['description', 'Description'],
   ['amount', 'Amount'],
-  ['debit', 'Debit'],
-  ['credit', 'Credit'],
-  ['category', 'Category'],
   ['account', 'Account'],
 ];
 
 export function ImportTab({
   amountSign,
-  automationAccountStatuses,
-  automationProfiles,
   columnMapping,
   columnOptions,
   categoryOptions,
@@ -27,12 +22,10 @@ export function ImportTab({
   duplicateImportBatch,
   duplicateRowsToKeep,
   hasHeader,
-  isAutomating,
   isCategorizing,
   isClearingCategories,
   isClearingTransactions,
   isUploading,
-  onAutomation,
   onApplyCategory,
   onCategorizationPageChange,
   onClearCategories,
@@ -179,44 +172,6 @@ export function ImportTab({
           pageSize={categorizationPageSize}
           total={categorizationTotal}
         />
-      </div>
-
-      <div className="control-panel accent-panel">
-        <div className="panel-heading">
-          <p className="eyebrow">Browser automation</p>
-          <h2>Simplii browser</h2>
-        </div>
-        <p>
-          Opens the Simplii login page in your regular Chrome profile. Close Chrome first so the profile is available.
-        </p>
-
-        <div className="bank-download-list">
-          {automationProfiles.length ? automationProfiles.map((bank) => (
-            <div className="bank-download-group" key={bank.id}>
-              <div className="bank-download-heading">
-                <strong>{bank.name}</strong>
-                <small>Chrome profile browser launch</small>
-              </div>
-            </div>
-          )) : (
-            <p className="empty-state">No browser launch profile is configured.</p>
-          )}
-        </div>
-
-        {automationAccountStatuses.length ? (
-          <div className="automation-status-list" aria-label="Automation account status">
-            {automationAccountStatuses.map((account) => (
-              <div className="automation-status-row" key={account.account_id}>
-                <span>{account.account_label}</span>
-                <small>{account.status}</small>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <button className="secondary-button" type="button" onClick={onAutomation} disabled={isAutomating}>
-          {isAutomating ? 'Opening...' : 'Open Simplii in Chrome'}
-        </button>
       </div>
 
       <div className="status-panel">
