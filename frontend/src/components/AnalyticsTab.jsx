@@ -1,6 +1,7 @@
 import { formatCurrency } from '../utils/currency';
 import { CategorySpendPieChart } from './CategorySpendPieChart';
 import { SpendTrendChart } from './SpendTrendChart';
+import { DataState } from './DataState';
 
 const timeframeOptions = [
   [90, '3 months'],
@@ -16,6 +17,8 @@ export function AnalyticsTab({
   selectedCategory,
   selectedTimeframeDays,
   summary,
+  loadState,
+  onRetry,
 }) {
   const last30Days = summary?.last_30_days || {};
   const percentDifference = last30Days.percent_difference_vs_last_month;
@@ -23,6 +26,18 @@ export function AnalyticsTab({
     ? 'No previous spend'
     : `${percentDifference > 0 ? '+' : ''}${percentDifference}%`;
   const selectedTimeframeLabel = timeframeOptions.find(([days]) => days === selectedTimeframeDays)?.[1] || 'Custom';
+
+  if (loadState?.loading || loadState?.error) {
+    return <DataState state={loadState} label="spending analytics" onRetry={onRetry} />;
+  }
+  if (summary?.transaction_count === 0) {
+    return (
+      <div className="data-state">
+        <h2>No transactions yet</h2>
+        <p>Open the Import tab to add a statement and start exploring your spending.</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -102,12 +117,12 @@ export function AnalyticsTab({
               </label>
             </div>
           </div>
-          {summary?.weekly_breakdown?.length ? (
+          {summary?.weekly_breakdown?.some((week) => Number(week.total) !== 0) ? (
             <div className="trend-chart">
               <SpendTrendChart weeklyBreakdown={summary.weekly_breakdown} />
             </div>
           ) : (
-            <p className="empty-state">Upload a statement to see weekly spending.</p>
+            <p className="empty-state">No spending matches this category and timeframe.</p>
           )}
         </article>
 

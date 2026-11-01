@@ -5,7 +5,10 @@ from typing import Any
 
 
 class StatementParseError(ValueError):
-    pass
+    def __init__(self, message: str, row_number: int | None = None, row: list[str] | None = None):
+        super().__init__(message)
+        self.row_number = row_number
+        self.row = row
 
 
 HEADER_ALIASES = {
@@ -118,6 +121,7 @@ def parse_statement(
     column_mapping: dict[str, Any] | None = None,
     has_header: bool = True,
     amount_sign: str = "spend_positive",
+    default_account: str = "bank",
 ) -> dict:
     if amount_sign not in {"spend_positive", "spend_negative"}:
         raise StatementParseError("Amount sign must be spend_positive or spend_negative.")
@@ -146,19 +150,22 @@ def parse_statement(
                 if not any(_clean(value) for value in row):
                     continue
 
-                description = _row_value(row, headers["description"])
-                if not description:
-                    raise StatementParseError(f"Missing description on row {row_number}.")
+                try:
+                    description = _row_value(row, headers["description"])
+                    if not description:
+                        raise StatementParseError("Missing description.")
 
-                transactions.append(
-                    {
-                        "date": _normalize_date(_row_value(row, headers["date"])),
-                        "description": description,
-                        "amount": _parse_amount(row, headers, amount_sign=amount_sign),
-                        "category": _row_value(row, headers.get("category")) or "uncategorized",
-                        "account": _row_value(row, headers.get("account")) or "bank",
-                    }
-                )
+                    transactions.append(
+                        {
+                            "date": _normalize_date(_row_value(row, headers["date"])),
+                            "description": description,
+                            "amount": _parse_amount(row, headers, amount_sign=amount_sign),
+                            "category": _row_value(row, headers.get("category")) or "uncategorized",
+                            "account": _row_value(row, headers.get("account")) or _clean(default_account) or "bank",
+                        }
+                    )
+                except StatementParseError as exc:
+                    raise StatementParseError(str(exc), row_number=row_number, row=row) from exc
 
         if not transactions:
             raise StatementParseError("CSV file did not contain any transactions.")

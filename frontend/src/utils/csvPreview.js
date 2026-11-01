@@ -1,4 +1,4 @@
-export function parseCsvPreview(text, maxRows = 6) {
+export function parseCsvPreview(text, maxRows = 6, preserveEmptyRows = false) {
   const rows = [];
   let row = [];
   let value = '';
@@ -21,7 +21,7 @@ export function parseCsvPreview(text, maxRows = 6) {
         index += 1;
       }
       row.push(value.trim());
-      if (row.some((cell) => cell)) {
+      if (preserveEmptyRows || row.some((cell) => cell)) {
         rows.push(row);
       }
       row = [];
@@ -36,10 +36,14 @@ export function parseCsvPreview(text, maxRows = 6) {
 
   if (rows.length < maxRows && (value || row.length)) {
     row.push(value.trim());
-    if (row.some((cell) => cell)) {
+    if (preserveEmptyRows || row.some((cell) => cell)) {
       rows.push(row);
     }
   }
 
   return rows;
+}
+
+export function serializeCsv(rows) {
+  return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\r\n');
 }

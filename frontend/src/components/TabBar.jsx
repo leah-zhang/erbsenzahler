@@ -4,11 +4,14 @@ export function TabBar({ activeTab, onTabChange }) {
       <button className={activeTab === 'import' ? 'active' : ''} type="button" onClick={() => onTabChange('import')}>
         Import
       </button>
-      <button className={activeTab === 'categories' ? 'active' : ''} type="button" onClick={() => onTabChange('categories')}>
-        Manage Spend Categories
+      <button className={activeTab === 'transactions' ? 'active' : ''} type="button" onClick={() => onTabChange('transactions')}>
+        Transactions
       </button>
       <button className={activeTab === 'analytics' ? 'active' : ''} type="button" onClick={() => onTabChange('analytics')}>
-        Spend Analytics
+        Spending
+      </button>
+      <button className={activeTab === 'categories' ? 'active' : ''} type="button" onClick={() => onTabChange('categories')}>
+        Categories
       </button>
       <button className={activeTab === 'accounts' ? 'active' : ''} type="button" onClick={() => onTabChange('accounts')}>
         Accounts

@@ -68,6 +68,36 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parsed["transactions"][0]["description"], "Coffee")
         self.assertEqual(parsed["transactions"][1]["amount"], 31.10)
 
+    def test_row_errors_identify_csv_record_and_original_cells(self):
+        for bad_row, message in [
+            ('bad-date,Coffee,4.25', 'Invalid date'),
+            ('2026-07-01,Coffee,nope', 'Invalid amount'),
+            ('2026-07-01,,4.25', 'Missing description'),
+        ]:
+            with self.subTest(bad_row=bad_row):
+                path = self.write_csv('Date,Description,Amount\n\n2026-07-01,"Multi\nline",1\n' + bad_row + '\n')
+                with self.assertRaises(StatementParseError) as raised:
+                    parse_statement(path)
+                self.assertEqual(raised.exception.row_number, 4)
+                self.assertEqual(raised.exception.row, bad_row.split(','))
+                self.assertIn(message, str(raised.exception))
+
+    def test_headerless_row_error_uses_first_record(self):
+        path = self.write_csv('bad,Coffee,4.25\n')
+        with self.assertRaises(StatementParseError) as raised:
+            parse_statement(path, column_mapping={'date': 0, 'description': 1, 'amount': 2}, has_header=False)
+        self.assertEqual(raised.exception.row_number, 1)
+
+    def test_default_account_fills_only_missing_accounts(self):
+        path = self.write_csv('Date,Description,Amount,Account\n2026-07-01,Coffee,5,\n2026-07-02,Shop,10,Other card\n')
+        result = parse_statement(path, default_account=' My Visa ')
+        self.assertEqual([item['account'] for item in result['transactions']], ['My Visa', 'Other card'])
+        path = self.write_csv('2026-07-01,Coffee,-5\n')
+        result = parse_statement(path, column_mapping={'date':0,'description':1,'amount':2}, has_header=False, amount_sign='spend_negative', default_account='My Visa')
+        self.assertEqual(result['transactions'][0]['account'], 'My Visa')
+        self.assertEqual(result['transactions'][0]['amount'], 5)
+        self.assertEqual(parse_statement(path, column_mapping={'date':0,'description':1,'amount':2}, has_header=False, default_account='  ')['transactions'][0]['account'], 'bank')
+
     def test_rejects_invalid_amount_sign(self):
         path = self.write_csv("Date,Description,Amount\n2026-07-01,Coffee,4.25\n")
 

@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from app.models import MerchantCategoryRule, Statement, Transaction, engine
 from app.main import categorize_merchant, categorization_suggestions, clear_database, clear_transaction_categories
-from app.main import clear_transactions, rename_category
+from app.main import clear_transactions, rename_category, recent_statements
 from app.main import monthly_summary, remove_merchant_from_category, transaction_categories, transaction_category_details
 from app.main import transaction_category_dashboard, transaction_category_summary, upload_statement
 from app.main import (
@@ -24,15 +24,15 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls):
         with Session(engine) as session:
             cls._saved_statements = [
-                statement.model_dump(exclude={"id"})
+                statement.model_dump()
                 for statement in session.query(Statement).all()
             ]
             cls._saved_transactions = [
-                transaction.model_dump(exclude={"id"})
+                transaction.model_dump()
                 for transaction in session.query(Transaction).all()
             ]
             cls._saved_category_rules = [
-                rule.model_dump(exclude={"id"})
+                rule.model_dump()
                 for rule in session.query(MerchantCategoryRule).all()
             ]
 
@@ -54,6 +54,34 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
             for rule_data in cls._saved_category_rules:
                 session.add(MerchantCategoryRule(**rule_data))
             session.commit()
+
+    async def test_invalid_row_returns_editor_details_without_partial_import(self):
+        with Session(engine) as session:
+            before = len(session.query(Transaction).all())
+        file = UploadFile(filename="invalid-row.csv", file=BytesIO(
+            b"Date,Description,Amount\n2026-07-01,Coffee,4.25\nbad,Shop,10\n"
+        ))
+        with self.assertRaises(HTTPException) as raised:
+            await upload_statement(file)
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(raised.exception.detail["row_number"], 3)
+        self.assertEqual(raised.exception.detail["row"], ["bad", "Shop", "10"])
+        with Session(engine) as session:
+            self.assertEqual(len(session.query(Transaction).all()), before)
+
+    async def test_recent_statements_are_limited_and_newest_first(self):
+        clear_database()
+        with Session(engine) as session:
+            for index in range(12):
+                session.add(Statement(filename=f"statement-{index}.csv", uploaded_at=f"2026-07-{index + 1:02d}T12:00:00+00:00", parsed_format="csv", status="imported"))
+            session.add(Statement(filename="failed.csv", uploaded_at="2026-08-01T12:00:00+00:00", parsed_format="csv", status="failed"))
+            session.commit()
+        statements = recent_statements()["statements"]
+        self.assertEqual(len(statements), 10)
+        self.assertEqual(statements[0]["filename"], "statement-11.csv")
+        self.assertEqual(statements[-1]["filename"], "statement-2.csv")
+        clear_database()
+        self.assertEqual(recent_statements()["statements"], [])
 
     async def test_upload_imports_csv_transactions(self):
         file = UploadFile(filename="statement.csv", file=BytesIO(b"Date,Description,Amount\n2026-07-01,Coffee,4.25\n"))

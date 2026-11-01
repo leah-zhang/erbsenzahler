@@ -58,10 +58,20 @@ For headered CSVs without manual mapping, the backend can still auto-detect comm
 
 Uploaded statement files are stored under `backend/storage/uploads/`.
 
+## Transactions and saved import setups
+
+The Transactions tab supports search, category/account/source/date filters, pagination, and editing individual transactions. New statement imports record their source file, including duplicate rows explicitly kept during review. Older transactions show "Source unavailable"; their source is not inferred.
+
+In Import, select a saved setup or save a named setup after mapping a CSV. Setups remember column mappings, header presence, spending sign, and a fallback account in this browser's local storage. The selected setup is applied to the next file. Review mappings if the file's columns change. CSV account values take precedence over the fallback account; blank accounts use the fallback or `bank`.
+
 ## API Overview
 
 Core backend routes include:
 
+- `GET /api/statements/recent`
+- `GET /api/transactions`
+- `GET /api/transactions/accounts`
+- `PATCH /api/transactions/{transaction_id}`
 - `POST /api/statements/upload`
 - `POST /api/statements/upload/duplicates/{batch_id}`
 - `GET /api/analytics/monthly`

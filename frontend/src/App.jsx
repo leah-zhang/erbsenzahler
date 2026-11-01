@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from './api/client';
+import { AppHeader } from './components/AppHeader';
 import { AccountValuesTab } from './components/AccountValuesTab';
 import { AnalyticsTab } from './components/AnalyticsTab';
 import { CategoriesTab } from './components/CategoriesTab';
 import { ImportTab } from './components/ImportTab';
+import { TransactionsTab } from './components/TransactionsTab';
 import { TabBar } from './components/TabBar';
-import { parseCsvPreview } from './utils/csvPreview';
+import { readImportPreferences, writeImportPreferences } from './utils/importProfiles';
+import { parseCsvPreview, serializeCsv } from './utils/csvPreview';
 
 const emptyColumnMapping = {
   date: '',
@@ -26,16 +29,46 @@ const emptyAccountImportMapping = {
   contributions: [],
 };
 
-const categorizationPageSize = 10;
 const uncategorizedCategoryPageSize = 20;
 const batchCategoryKey = '__batch_uncategorized__';
 
 function App() {
   const [activeTab, setActiveTab] = useState('analytics');
-  const [status, setStatus] = useState('Ready to load statements');
+  const [recentImports, setRecentImports] = useState([]);
+  const [hasImportedStatement, setHasImportedStatement] = useState(false);
+  const [feedbackByTab, setFeedbackByTab] = useState({
+    import: { message: 'Ready to load statements', type: 'info' },
+  });
+
+  // Each async action keeps the tab from the render in which it started.
+  const setStatus = (message, type = 'info', tab = activeTab) => {
+    const text = typeof message === 'string' ? message
+      : Array.isArray(message) ? message.map((item) => item.msg || 'Invalid value.').join(' ')
+        : message?.message || 'The action could not be completed. Please try again.';
+    setFeedbackByTab((current) => ({ ...current, [tab]: { message: text, type } }));
+  };
+
+  const dismissFeedback = (tab) => {
+    setFeedbackByTab((current) => ({ ...current, [tab]: null }));
+  };
+  const [loadStates, setLoadStates] = useState(Object.fromEntries(
+    ['analytics', 'categories', 'accounts', 'recent'].map((key) => [key, { loading: true, error: false }]),
+  ));
+  const loadRequests = useRef({});
+  const beginLoad = (key) => {
+    const request = (loadRequests.current[key] || 0) + 1;
+    loadRequests.current[key] = request;
+    setLoadStates((current) => ({ ...current, [key]: { loading: true, error: false } }));
+    return request;
+  };
+  const finishLoad = (key, request, error = false) => {
+    if (loadRequests.current[key] !== request) return;
+    setLoadStates((current) => ({ ...current, [key]: { loading: false, error } }));
+  };
   const [analyticsTimeframeDays, setAnalyticsTimeframeDays] = useState(90);
   const [analyticsCategory, setAnalyticsCategory] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [importRowError, setImportRowError] = useState(null);
   const [summary, setSummary] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isCategorizing, setIsCategorizing] = useState(false);
@@ -45,9 +78,14 @@ function App() {
   const [csvPreview, setCsvPreview] = useState([]);
   const [duplicateImportBatch, setDuplicateImportBatch] = useState(null);
   const [duplicateRowsToKeep, setDuplicateRowsToKeep] = useState([]);
-  const [hasHeader, setHasHeader] = useState(true);
-  const [amountSign, setAmountSign] = useState('spend_positive');
-  const [columnMapping, setColumnMapping] = useState(emptyColumnMapping);
+  const [importPreferences, setImportPreferences] = useState(readImportPreferences);
+  const initialProfile = importPreferences.profiles.find((profile) => profile.id === importPreferences.selectedId);
+  const [profileName, setProfileName] = useState(initialProfile?.name || '');
+  const [defaultAccount, setDefaultAccount] = useState(initialProfile?.defaultAccount || '');
+  const [importAccounts, setImportAccounts] = useState([]);
+  const [hasHeader, setHasHeader] = useState(initialProfile?.hasHeader ?? true);
+  const [amountSign, setAmountSign] = useState(initialProfile?.amountSign || 'spend_positive');
+  const [columnMapping, setColumnMapping] = useState(initialProfile?.columnMapping || emptyColumnMapping);
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [categorySummary, setCategorySummary] = useState([]);
   const [categoryDetails, setCategoryDetails] = useState({
@@ -60,15 +98,12 @@ function App() {
   const [categoryEdits, setCategoryEdits] = useState({});
   const [categoryGroupExclusions, setCategoryGroupExclusions] = useState({});
   const [selectedUncategorizedGroups, setSelectedUncategorizedGroups] = useState([]);
-  const [categorizationGroups, setCategorizationGroups] = useState([]);
-  const [categorizationPage, setCategorizationPage] = useState(0);
-  const [categorizationTotal, setCategorizationTotal] = useState(0);
-  const [categorizationHasMore, setCategorizationHasMore] = useState(false);
   const [customCategories, setCustomCategories] = useState({});
   const [accountValueRows, setAccountValueRows] = useState([]);
   const [accountImportDraft, setAccountImportDraft] = useState(null);
 
   const loadSummary = async () => {
+    const request = beginLoad('analytics');
     try {
       const response = await api.get('/analytics/monthly', {
         params: {
@@ -76,15 +111,19 @@ function App() {
           weekly_category: analyticsCategory,
         },
       });
+      if (loadRequests.current.analytics !== request) return;
       setSummary(response.data);
-    } catch (error) {
-      setSummary(null);
+      finishLoad('analytics', request);
+    } catch {
+      finishLoad('analytics', request, true);
     }
   };
 
   useEffect(() => {
     loadCategoryDashboard();
     loadAccountValues();
+    loadRecentImports();
+    loadImportAccounts();
   }, []);
 
   useEffect(() => {
@@ -127,67 +166,78 @@ function App() {
     })),
   });
 
+  const loadImportAccounts = async () => {
+    try {
+      const response = await api.get('/transactions/accounts');
+      setImportAccounts(response.data.accounts || []);
+    } catch { /* Account suggestions are optional; a name can always be entered. */ }
+  };
+
+  const applyImportProfile = (profile) => {
+    setHasHeader(profile?.hasHeader ?? true);
+    setAmountSign(profile?.amountSign || 'spend_positive');
+    setColumnMapping(profile?.columnMapping || emptyColumnMapping);
+    setDefaultAccount(profile?.defaultAccount || '');
+    setProfileName(profile?.name || '');
+    setImportRowError(null);
+  };
+
+  const selectImportProfile = (id) => {
+    const profile = importPreferences.profiles.find((item) => item.id === id);
+    setImportPreferences((current) => ({ ...current, selectedId: id }));
+    applyImportProfile(profile);
+    try { writeImportPreferences(importPreferences.profiles, id); } catch { /* Settings still apply to this import. */ }
+  };
+
+  const saveImportProfile = () => {
+    const name = profileName.trim();
+    if (!name) { setStatus('Enter a name for this import setup.', 'error'); return; }
+    const id = importPreferences.selectedId || crypto.randomUUID();
+    const profile = { id, name, columnMapping, hasHeader, amountSign, defaultAccount: defaultAccount.trim(), columnCount: columnOptions.length, columnHeaders: hasHeader ? (csvPreview[0] || []) : [] };
+    const profiles = [...importPreferences.profiles.filter((item) => item.id !== id), profile];
+    try {
+      writeImportPreferences(profiles, id);
+      setImportPreferences({ profiles, selectedId: id });
+      setStatus(`Saved import setup "${name}" in this browser.`, 'success');
+    } catch { setStatus('Could not save the setup in this browser. You can still import with these settings.', 'error'); }
+  };
+
+  const deleteImportProfile = () => {
+    const profiles = importPreferences.profiles.filter((item) => item.id !== importPreferences.selectedId);
+    try {
+      writeImportPreferences(profiles, '');
+      setImportPreferences({ profiles, selectedId: '' });
+      setProfileName('');
+      setStatus('Saved import setup removed. Current column settings are still available.', 'success');
+    } catch { setStatus('Could not remove this saved setup. Please try again.', 'error'); }
+  };
+
+  const loadRecentImports = async () => {
+    const request = beginLoad('recent');
+    try {
+      const response = await api.get('/statements/recent');
+      if (loadRequests.current.recent !== request) return;
+      setRecentImports(response.data.statements || []);
+      finishLoad('recent', request);
+    } catch {
+      finishLoad('recent', request, true);
+    }
+  };
+
   const loadAccountValues = async () => {
+    const request = beginLoad('accounts');
     try {
       const response = await api.get('/account-values');
+      if (loadRequests.current.accounts !== request) return;
       setAccountValueRows((response.data.snapshots || []).map(normalizeAccountSnapshot));
-    } catch (error) {
-      setAccountValueRows([]);
-    }
-  };
-
-  const loadCategories = async () => {
-    try {
-      const response = await api.get('/transactions/categories');
-      setCategoryOptions(response.data.categories || []);
-    } catch (error) {
-      setCategoryOptions([]);
-    }
-  };
-
-  const loadCategorySummary = async () => {
-    try {
-      const response = await api.get('/transactions/category-summary');
-      setCategorySummary(response.data.categories || []);
-      setCategoryEdits(
-        Object.fromEntries((response.data.categories || []).map((category) => [category.name, category.name])),
-      );
-    } catch (error) {
-      setCategorySummary([]);
-      setCategoryEdits({});
-    }
-  };
-
-  const loadCategoryDetails = async (page = uncategorizedCategoryPage) => {
-    try {
-      const offset = page * uncategorizedCategoryPageSize;
-      const response = await api.get('/transactions/category-details', {
-        params: {
-          uncategorized_limit: uncategorizedCategoryPageSize,
-          uncategorized_offset: offset,
-        },
-      });
-      setCategoryDetails({
-        categories: response.data.categories || [],
-        uncategorized_groups: response.data.uncategorized_groups || [],
-        uncategorized_total: response.data.uncategorized_total || 0,
-        uncategorized_has_more: Boolean(response.data.uncategorized_has_more),
-      });
-      setUncategorizedCategoryPage(page);
-      setCategoryGroupExclusions({});
-    } catch (error) {
-      setCategoryDetails({
-        categories: [],
-        uncategorized_groups: [],
-        uncategorized_total: 0,
-        uncategorized_has_more: false,
-      });
-      setUncategorizedCategoryPage(0);
-      setCategoryGroupExclusions({});
+      finishLoad('accounts', request);
+    } catch {
+      finishLoad('accounts', request, true);
     }
   };
 
   const loadCategoryDashboard = async (page = uncategorizedCategoryPage) => {
+    const request = beginLoad('categories');
     try {
       const offset = page * uncategorizedCategoryPageSize;
       const response = await api.get('/transactions/category-dashboard', {
@@ -196,6 +246,7 @@ function App() {
           uncategorized_offset: offset,
         },
       });
+      if (loadRequests.current.categories !== request) return;
       setCategoryOptions(response.data.categories || []);
       setCategorySummary(response.data.category_summary || []);
       setCategoryEdits(
@@ -209,37 +260,9 @@ function App() {
       });
       setUncategorizedCategoryPage(page);
       setCategoryGroupExclusions({});
-    } catch (error) {
-      setCategoryOptions([]);
-      setCategorySummary([]);
-      setCategoryEdits({});
-      setCategoryDetails({
-        categories: [],
-        uncategorized_groups: [],
-        uncategorized_total: 0,
-        uncategorized_has_more: false,
-      });
-      setUncategorizedCategoryPage(0);
-      setCategoryGroupExclusions({});
-    }
-  };
-
-  const loadCategorizationSuggestions = async (page = categorizationPage) => {
-    try {
-      const response = await api.get('/transactions/categorization-suggestions', {
-        params: {
-          limit: categorizationPageSize,
-          offset: page * categorizationPageSize,
-        },
-      });
-      setCategorizationGroups(response.data.groups || []);
-      setCategorizationPage(page);
-      setCategorizationTotal(response.data.total || 0);
-      setCategorizationHasMore(Boolean(response.data.has_more));
-    } catch (error) {
-      setCategorizationGroups([]);
-      setCategorizationTotal(0);
-      setCategorizationHasMore(false);
+      finishLoad('categories', request);
+    } catch {
+      finishLoad('categories', request, true);
     }
   };
 
@@ -261,13 +284,9 @@ function App() {
 
   const handleFileChange = async (file) => {
     setSelectedFile(file);
+    setImportRowError(null);
     setCsvPreview([]);
-    setAmountSign('spend_positive');
-    setColumnMapping(emptyColumnMapping);
-    setCategorizationGroups([]);
-    setCategorizationPage(0);
-    setCategorizationTotal(0);
-    setCategorizationHasMore(false);
+    applyImportProfile(importPreferences.profiles.find((item) => item.id === importPreferences.selectedId));
     setCustomCategories({});
     setSelectedUncategorizedGroups([]);
     setDuplicateImportBatch(null);
@@ -280,7 +299,7 @@ function App() {
     const text = await file.text();
     const rows = parseCsvPreview(text);
     setCsvPreview(rows);
-    setStatus(rows.length ? 'Map the CSV columns, then import.' : 'Could not read any rows from this CSV.');
+    setStatus(rows.length ? 'Map the CSV columns, then import.' : 'Could not read any rows from this CSV.', rows.length ? 'info' : 'error');
   };
 
   const updateColumnRole = (columnIndex, field) => {
@@ -297,16 +316,17 @@ function App() {
     });
   };
 
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      setStatus('Please choose a statement file first.');
+  const handleUpload = async (fileToUpload = selectedFile) => {
+    if (!fileToUpload) {
+      setStatus('Please choose a statement file first.', 'error');
       return;
     }
 
     const formData = new FormData();
-    formData.append('file', selectedFile);
+    formData.append('file', fileToUpload);
     formData.append('has_header', String(hasHeader));
     formData.append('amount_sign', amountSign);
+    formData.append('default_account', defaultAccount.trim() || 'bank');
     formData.append(
       'column_mapping',
       JSON.stringify(
@@ -318,7 +338,8 @@ function App() {
       ),
     );
     setIsUploading(true);
-    setStatus(`Uploading ${selectedFile.name}...`);
+    setImportRowError(null);
+    setStatus(`Uploading ${fileToUpload.name}...`);
 
     try {
       const response = await api.post('/statements/upload', formData, {
@@ -331,6 +352,7 @@ function App() {
         duplicateCount
           ? `Imported ${importedCount} transactions from ${response.data.filename}. Review ${duplicateCount} possible duplicates.`
           : `Imported ${importedCount} transactions from ${response.data.filename}.`,
+        'success',
       );
       if (duplicateCount) {
         setDuplicateImportBatch({
@@ -342,20 +364,39 @@ function App() {
         setDuplicateImportBatch(null);
         setDuplicateRowsToKeep([]);
       }
+      await Promise.all([loadRecentImports(), loadImportAccounts()]);
+      setHasImportedStatement(true);
       setSelectedFile(null);
       setCsvPreview([]);
       setCustomCategories({});
       await Promise.all([
-        loadCategorizationSuggestions(0),
         loadCategoryDashboard(0),
         loadSummary(),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Upload failed. Make sure the backend is running and the CSV has Date, Description, and Amount columns.';
-      setStatus(detail);
+      if (detail && typeof detail === 'object' && detail.row_number) {
+        const width = Math.max(detail.row.length, columnOptions.length);
+        setImportRowError({ ...detail, row: Array.from({ length: width }, (_, index) => detail.row[index] ?? '') });
+        setStatus(`Row ${detail.row_number}: ${detail.message} Edit or delete this row to continue.`, 'error');
+      } else {
+        setStatus(typeof detail === 'string' ? detail : 'Upload failed. Check the CSV column mapping.', 'error');
+      }
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const handleResolveImportRow = async (deleteRow = false) => {
+    if (!selectedFile || !importRowError) return;
+    const rows = parseCsvPreview(await selectedFile.text(), Infinity, true);
+    const index = importRowError.row_number - 1;
+    if (deleteRow) rows.splice(index, 1);
+    else rows[index] = importRowError.row;
+    const correctedFile = new File([serializeCsv(rows)], selectedFile.name, { type: 'text/csv' });
+    setSelectedFile(correctedFile);
+    setCsvPreview(rows.slice(0, 6));
+    await handleUpload(correctedFile);
   };
 
   const handleToggleDuplicateRow = (rowId) => {
@@ -380,17 +421,17 @@ function App() {
       });
       setStatus(
         `Kept ${response.data.imported_duplicates} duplicate rows and discarded ${response.data.discarded_duplicates}.`,
+        'success',
       );
       setDuplicateImportBatch(null);
       setDuplicateRowsToKeep([]);
       await Promise.all([
-        loadCategorizationSuggestions(0),
         loadCategoryDashboard(0),
         loadSummary(),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not resolve duplicate rows. Try uploading the file again.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     } finally {
       setIsUploading(false);
     }
@@ -418,7 +459,7 @@ function App() {
         category: trimmedCategory,
         excluded_merchants: excludedMerchants,
       });
-      setStatus(`Categorized ${response.data.updated_transactions} transactions as ${trimmedCategory}.`);
+      setStatus(`Categorized ${response.data.updated_transactions} transactions as ${trimmedCategory}.`, 'success');
       setCustomCategories((current) => ({
         ...current,
         [merchantKey]: '',
@@ -429,16 +470,12 @@ function App() {
         uncategorized_total: Math.max((current.uncategorized_total || 0) - 1, 0),
       }));
       setSelectedUncategorizedGroups((current) => current.filter((selectedKey) => selectedKey !== merchantKey));
-      const nextPage = categorizationGroups.length <= 1 && categorizationPage > 0
-        ? categorizationPage - 1
-        : categorizationPage;
       await Promise.all([
-        loadCategorizationSuggestions(nextPage),
         loadCategoryDashboard(0),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not apply the category. Make sure the backend is running.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     } finally {
       setIsCategorizing(false);
     }
@@ -467,7 +504,7 @@ function App() {
         (total, response) => total + (response.data.updated_transactions || 0),
         0,
       );
-      setStatus(`Categorized ${updatedTransactions} transactions as ${trimmedCategory}.`);
+      setStatus(`Categorized ${updatedTransactions} transactions as ${trimmedCategory}.`, 'success');
       setCustomCategories((current) => ({
         ...current,
         [batchCategoryKey]: '',
@@ -481,22 +518,17 @@ function App() {
       }));
       setSelectedUncategorizedGroups([]);
       await Promise.all([
-        loadCategorizationSuggestions(0),
         loadCategoryDashboard(0),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not apply the category. Make sure the backend is running.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     } finally {
       setIsCategorizing(false);
     }
   };
 
   const resetCategorizationState = () => {
-    setCategorizationGroups([]);
-    setCategorizationPage(0);
-    setCategorizationTotal(0);
-    setCategorizationHasMore(false);
     setCustomCategories({});
   };
 
@@ -511,8 +543,9 @@ function App() {
 
     try {
       const response = await api.delete('/transactions');
-      setStatus(`Cleared ${response.data.deleted_transactions} transactions.`);
+      setStatus(`Cleared ${response.data.deleted_transactions} transactions.`, 'success');
       resetCategorizationState();
+      await loadRecentImports();
       setCategoryOptions([]);
       setCategorySummary([]);
       setCategoryDetails({
@@ -528,7 +561,7 @@ function App() {
       await loadSummary();
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not clear transactions. Make sure the backend is running.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     } finally {
       setIsClearingTransactions(false);
     }
@@ -545,7 +578,7 @@ function App() {
 
     try {
       const response = await api.delete('/transactions/categories');
-      setStatus(`Cleared categories from ${response.data.updated_transactions} transactions.`);
+      setStatus(`Cleared categories from ${response.data.updated_transactions} transactions.`, 'success');
       setCategoryOptions([]);
       setCategorySummary([]);
       setCategoryDetails({
@@ -559,20 +592,16 @@ function App() {
       setCategoryGroupExclusions({});
       setSelectedUncategorizedGroups([]);
       await Promise.all([
-        loadCategorizationSuggestions(0),
         loadCategoryDashboard(0),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not clear categories. Make sure the backend is running.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     } finally {
       setIsClearingCategories(false);
     }
   };
 
-  const handleCategorizationPageChange = (nextPage) => {
-    loadCategorizationSuggestions(nextPage);
-  };
   const handleUncategorizedCategoryPageChange = (nextPage) => {
     loadCategoryDashboard(nextPage);
   };
@@ -596,14 +625,14 @@ function App() {
         current_category: currentCategory,
         new_category: trimmedCategory,
       });
-      setStatus(`Renamed ${response.data.updated_transactions} transactions to ${trimmedCategory}.`);
+      setStatus(`Renamed ${response.data.updated_transactions} transactions to ${trimmedCategory}.`, 'success');
       await Promise.all([
         loadCategoryDashboard(),
         loadSummary(),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not rename the category. Make sure the backend is running.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     } finally {
       setIsRenamingCategory(false);
     }
@@ -617,14 +646,13 @@ function App() {
         category,
         merchant,
       });
-      setStatus(`Removed ${response.data.updated_transactions} transactions from ${category}.`);
+      setStatus(`Removed ${response.data.updated_transactions} transactions from ${category}.`, 'success');
       await Promise.all([
-        loadCategorizationSuggestions(0),
         loadCategoryDashboard(),
       ]);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not remove the merchant. Make sure the backend is running.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     }
   };
 
@@ -673,8 +701,9 @@ function App() {
         contributions: [],
       });
       setAccountValueRows((current) => [normalizeAccountSnapshot(response.data), ...current]);
+      setStatus('Account value row added.', 'success');
     } catch (error) {
-      setStatus('Could not add an account value row. Make sure the backend is running.');
+      setStatus('Could not add an account value row. Make sure the backend is running.', 'error');
     }
   };
 
@@ -707,6 +736,7 @@ function App() {
     ));
 
     if (!nextRow.monthEnd) {
+      setStatus('Choose a month end date to save this row.', 'error');
       return;
     }
 
@@ -715,8 +745,9 @@ function App() {
       setAccountValueRows((current) => (
         current.map((row) => (row.id === rowId ? normalizeAccountSnapshot(response.data) : row))
       ));
+      setStatus('Account value row saved.', 'success');
     } catch (error) {
-      setStatus('Could not save the account value row. Make sure the backend is running.');
+      setStatus('Could not save the account value row. Make sure the backend is running.', 'error');
     }
   };
 
@@ -724,8 +755,9 @@ function App() {
     try {
       await api.delete(`/account-values/${rowId}`);
       setAccountValueRows((current) => current.filter((row) => row.id !== rowId));
+      setStatus('Account value row deleted.', 'success');
     } catch (error) {
-      setStatus('Could not delete the account value row. Make sure the backend is running.');
+      setStatus('Could not delete the account value row. Make sure the backend is running.', 'error');
     }
   };
 
@@ -779,8 +811,9 @@ function App() {
           .map((row) => api.patch(`/account-values/${row.id}`, accountRowPayload(row))),
       );
       await loadAccountValues();
+      setStatus('Account value column added.', 'success');
     } catch (error) {
-      setStatus('Could not add the account value column. Make sure the backend is running.');
+      setStatus('Could not add the account value column. Make sure the backend is running.', 'error');
       await loadAccountValues();
     }
   };
@@ -824,8 +857,9 @@ function App() {
           .map((row) => api.patch(`/account-values/${row.id}`, accountRowPayload(row))),
       );
       await loadAccountValues();
+      setStatus('Account value column renamed.', 'success');
     } catch (error) {
-      setStatus('Could not rename the account value column. Make sure the backend is running.');
+      setStatus('Could not rename the account value column. Make sure the backend is running.', 'error');
       await loadAccountValues();
     }
   };
@@ -853,8 +887,9 @@ function App() {
           .map((row) => api.patch(`/account-values/${row.id}`, accountRowPayload(row))),
       );
       await loadAccountValues();
+      setStatus('Account value column deleted.', 'success');
     } catch (error) {
-      setStatus('Could not delete the account value column. Make sure the backend is running.');
+      setStatus('Could not delete the account value column. Make sure the backend is running.', 'error');
       await loadAccountValues();
     }
   };
@@ -870,7 +905,7 @@ function App() {
     const response = await api.post('/account-values/import', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
-    setStatus(`Imported ${response.data.imported_snapshots} account value rows for ${year}.`);
+    setStatus(`Imported ${response.data.imported_snapshots} account value rows for ${year}.`, 'success');
     await loadAccountValues();
     setAccountImportDraft(null);
   };
@@ -886,7 +921,7 @@ function App() {
         await postAccountValueImport(year, file);
       } catch (error) {
         const detail = error?.response?.data?.detail || 'Could not import account values.';
-        setStatus(detail);
+        setStatus(detail, 'error');
       }
       return;
     }
@@ -965,7 +1000,7 @@ function App() {
       await postAccountValueImport(accountImportDraft.year, accountImportDraft.file, mapping);
     } catch (error) {
       const detail = error?.response?.data?.detail || 'Could not import account values.';
-      setStatus(detail);
+      setStatus(detail, 'error');
     }
   };
 
@@ -974,74 +1009,105 @@ function App() {
     setStatus('Account value import canceled.');
   };
 
+  const categorizationProps = {
+    categoryDetails: categoryDetails,
+    categoryGroupExclusions: categoryGroupExclusions,
+    categoryOptions: Array.from(new Set([...categoryOptions, ...categorySummary.map((category) => category.name)])),
+    customCategories: customCategories,
+    isCategorizing: isCategorizing,
+    onApplyCategory: handleApplyCategory,
+    onApplySelectedCategories: handleApplySelectedCategories,
+    onClearSelectedUncategorizedGroups: handleClearSelectedUncategorizedGroups,
+    onCustomCategoryChange: handleCustomCategoryChange,
+    onExcludeUncategorizedMerchant: handleExcludeUncategorizedMerchant,
+    onToggleUncategorizedGroup: handleToggleUncategorizedGroup,
+    onToggleVisibleUncategorizedGroups: handleToggleVisibleUncategorizedGroups,
+    onUncategorizedPageChange: handleUncategorizedCategoryPageChange,
+    selectedUncategorizedGroups: selectedUncategorizedGroups,
+    uncategorizedPage: uncategorizedCategoryPage,
+    uncategorizedPageSize: uncategorizedCategoryPageSize,
+  };
+
   return (
     <main className="app-shell">
+      <AppHeader onHome={() => setActiveTab('analytics')} />
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
 
       {activeTab === 'import' ? (
         <ImportTab
+          showCategorization={hasImportedStatement && (categoryDetails.uncategorized_total > 0 || loadStates.categories.loading || loadStates.categories.error)}
+          categoryLoadState={loadStates.categories}
+          onRetryCategories={() => loadCategoryDashboard()}
+          categorizationProps={categorizationProps}
+          recentImportsLoadState={loadStates.recent}
+          recentImports={recentImports}
+          onRetryRecentImports={loadRecentImports}
+          importProfiles={importPreferences.profiles}
+          selectedProfileId={importPreferences.selectedId}
+          profileName={profileName}
+          onProfileNameChange={setProfileName}
+          onSelectProfile={selectImportProfile}
+          onSaveProfile={saveImportProfile}
+          onDeleteProfile={deleteImportProfile}
+          defaultAccount={defaultAccount}
+          onDefaultAccountChange={setDefaultAccount}
+          importAccounts={importAccounts}
           columnMapping={columnMapping}
           columnOptions={columnOptions}
-          categoryOptions={categoryOptions}
-          customCategories={customCategories}
           csvPreview={csvPreview}
-          categorizationHasMore={categorizationHasMore}
-          categorizationGroups={categorizationGroups}
-          categorizationPage={categorizationPage}
-          categorizationPageSize={categorizationPageSize}
-          categorizationTotal={categorizationTotal}
           hasHeader={hasHeader}
           amountSign={amountSign}
           duplicateImportBatch={duplicateImportBatch}
           duplicateRowsToKeep={duplicateRowsToKeep}
-          isCategorizing={isCategorizing}
           isClearingCategories={isClearingCategories}
           isClearingTransactions={isClearingTransactions}
           isUploading={isUploading}
-          onApplyCategory={handleApplyCategory}
-          onCategorizationPageChange={handleCategorizationPageChange}
           onClearCategories={handleClearCategories}
           onClearTransactions={handleClearTransactions}
-          onCustomCategoryChange={handleCustomCategoryChange}
           onFileChange={handleFileChange}
           onHeaderChange={setHasHeader}
           onAmountSignChange={setAmountSign}
           onResolveDuplicateRows={handleResolveDuplicateRows}
           onToggleDuplicateRow={handleToggleDuplicateRow}
           onUpdateColumnRole={updateColumnRole}
-          onUpload={handleUpload}
+          onUpload={() => handleUpload()}
+          importRowError={importRowError}
+          onImportRowChange={(index, value) => setImportRowError((current) => ({
+            ...current, row: current.row.map((cell, cellIndex) => cellIndex === index ? value : cell),
+          }))}
+          onResolveImportRow={handleResolveImportRow}
           previewGridStyle={previewGridStyle}
           previewRows={previewRows}
           selectedFile={selectedFile}
-          status={status}
+          feedback={feedbackByTab.import}
+        />
+      ) : activeTab === 'transactions' ? (
+        <TransactionsTab
+          feedback={feedbackByTab.transactions}
+          onFeedback={(feedback) => setStatus(feedback.message, feedback.type, 'transactions')}
+          onDismissFeedback={() => dismissFeedback('transactions')}
+          onChanged={() => { loadSummary(); loadCategoryDashboard(); }}
         />
       ) : activeTab === 'categories' ? (
         <CategoriesTab
+          loadState={loadStates.categories}
+          onRetry={() => loadCategoryDashboard()}
+          feedback={feedbackByTab.categories}
+          onDismissFeedback={() => dismissFeedback('categories')}
+          categorizationProps={categorizationProps}
           categories={categorySummary}
-          categoryDetails={categoryDetails}
           categoryEdits={categoryEdits}
-          categoryGroupExclusions={categoryGroupExclusions}
-          categoryOptions={categoryOptions}
-          customCategories={customCategories}
-          isCategorizing={isCategorizing}
           isRenamingCategory={isRenamingCategory}
-          onApplyCategory={handleApplyCategory}
-          onApplySelectedCategories={handleApplySelectedCategories}
           onCategoryEditChange={handleCategoryEditChange}
-          onClearSelectedUncategorizedGroups={handleClearSelectedUncategorizedGroups}
-          onCustomCategoryChange={handleCustomCategoryChange}
-          onExcludeUncategorizedMerchant={handleExcludeUncategorizedMerchant}
           onRemoveCategorizedMerchant={handleRemoveCategorizedMerchant}
           onRenameCategory={handleRenameCategory}
-          onToggleUncategorizedGroup={handleToggleUncategorizedGroup}
-          onToggleVisibleUncategorizedGroups={handleToggleVisibleUncategorizedGroups}
-          onUncategorizedPageChange={handleUncategorizedCategoryPageChange}
-          selectedUncategorizedGroups={selectedUncategorizedGroups}
-          uncategorizedPage={uncategorizedCategoryPage}
-          uncategorizedPageSize={uncategorizedCategoryPageSize}
         />
       ) : activeTab === 'accounts' ? (
         <AccountValuesTab
+          loadState={loadStates.accounts}
+          onRetry={loadAccountValues}
+          feedback={feedbackByTab.accounts}
+          onDismissFeedback={() => dismissFeedback('accounts')}
           rows={accountValueRows}
           importDraft={accountImportDraft}
           onAddRow={handleAddAccountValueRow}
@@ -1057,6 +1123,8 @@ function App() {
         />
       ) : (
         <AnalyticsTab
+          loadState={loadStates.analytics}
+          onRetry={loadSummary}
           categoryOptions={categoryOptions}
           onCategoryChange={setAnalyticsCategory}
           onTimeframeChange={setAnalyticsTimeframeDays}

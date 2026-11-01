@@ -10,6 +10,8 @@ class Transaction(SQLModel, table=True):
     category: str = Field(default="uncategorized")
     account: str = Field(default="unknown")
     fingerprint: str = Field(default="", index=True)
+    statement_id: Optional[int] = Field(default=None, index=True, foreign_key="statement.id")
+    category_override: bool = Field(default=False)
 
 
 class MerchantCategoryRule(SQLModel, table=True):
@@ -58,6 +60,11 @@ def create_db_and_tables() -> None:
     with Session(engine) as session:
         connection = session.connection()
         transaction_columns = {row[1] for row in connection.exec_driver_sql('PRAGMA table_info("transaction")').all()}
+        if "statement_id" not in transaction_columns:
+            connection.exec_driver_sql('ALTER TABLE "transaction" ADD COLUMN statement_id INTEGER REFERENCES statement(id)')
+        connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_transaction_statement_id ON "transaction" (statement_id)')
+        if "category_override" not in transaction_columns:
+            connection.exec_driver_sql('ALTER TABLE "transaction" ADD COLUMN category_override BOOLEAN NOT NULL DEFAULT 0')
         if "fingerprint" not in transaction_columns:
             connection.exec_driver_sql('ALTER TABLE "transaction" ADD COLUMN fingerprint TEXT DEFAULT ""')
             rows = connection.exec_driver_sql('SELECT id, date, description, amount, account FROM "transaction"').all()

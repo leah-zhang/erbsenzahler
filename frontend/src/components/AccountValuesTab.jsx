@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 
 import { formatCurrency } from '../utils/currency';
+import { ActionFeedback } from './ActionFeedback';
+import { DataState } from './DataState';
 
 const baseAccountValueColumns = [
   ['monthEnd', 'Month End', 'date'],
@@ -136,6 +138,10 @@ export function AccountValuesTab({
   onDeleteColumn,
   onRenameColumn,
   onUpdateRow,
+  feedback,
+  onDismissFeedback,
+  loadState,
+  onRetry,
 }) {
   const [editingRows, setEditingRows] = useState([]);
   const [editingColumnYears, setEditingColumnYears] = useState([]);
@@ -269,8 +275,15 @@ export function AccountValuesTab({
     onDeleteColumn(year, section, columnName);
   };
 
+  if (loadState?.loading || loadState?.error) {
+    return <DataState state={loadState} label="account balances" onRetry={onRetry} />;
+  }
+
   return (
     <section className="account-values-page">
+      <div className="tab-feedback">
+        <ActionFeedback feedback={feedback} onDismiss={onDismissFeedback} />
+      </div>
       <article className="insight-panel">
         <div className="panel-heading account-values-heading">
           <div>

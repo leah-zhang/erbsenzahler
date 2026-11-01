@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 
+import { getChartTheme } from '../utils/chartTheme';
 import { formatCurrency } from '../utils/currency';
 import { escapeHtml, renderTransactionGroups } from '../utils/chartTooltip';
 
@@ -29,20 +30,22 @@ function renderTooltip(params) {
 export function CategorySpendPieChart({ categorySpend }) {
   const option = useMemo(() => {
     const categories = categorySpend || [];
+    const theme = getChartTheme();
 
     return {
       animationDuration: 420,
-      color: ['#5fa68e', '#d96c4a', '#3f6f8f', '#b88b4a', '#8f5fa6', '#7a8f5f', '#8f2d2d'],
+      textStyle: { fontFamily: theme.font },
+      color: theme.palette,
       tooltip: {
         trigger: 'item',
         appendToBody: true,
         confine: true,
-        backgroundColor: '#172026',
+        backgroundColor: theme.text,
         borderWidth: 0,
         extraCssText: 'max-width: min(520px, calc(100vw - 32px)); white-space: normal;',
         textStyle: {
           color: '#ffffff',
-          fontFamily: 'Inter, system-ui, sans-serif',
+          fontFamily: theme.font,
         },
         formatter: renderTooltip,
       },
@@ -50,8 +53,8 @@ export function CategorySpendPieChart({ categorySpend }) {
         bottom: 0,
         type: 'scroll',
         textStyle: {
-          color: '#34444b',
-          fontWeight: 800,
+          color: theme.text,
+          fontWeight: 600,
         },
       },
       series: [
@@ -67,12 +70,12 @@ export function CategorySpendPieChart({ categorySpend }) {
             transactions: category.transactions,
           })),
           label: {
-            color: '#34444b',
-            fontWeight: 800,
+            color: theme.text,
+            fontWeight: 600,
             formatter: ({ name, percent }) => `${name} ${Math.round(percent)}%`,
           },
           itemStyle: {
-            borderColor: '#ffffff',
+            borderColor: theme.surface,
             borderWidth: 2,
           },
           emphasis: {

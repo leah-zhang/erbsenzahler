@@ -64,12 +64,18 @@ class CategorizationTests(unittest.TestCase):
         self.assertEqual(merchant_key("POS PURCHASE FOOD BASICS MISSISSAUGA"), "Food basics")
 
     def test_merchant_key_groups_grab_order_patterns(self):
+        self.assertEqual(merchant_key("Grab"), "Grab")
         self.assertEqual(merchant_key("GRAB 123456789"), "Grab")
         self.assertEqual(merchant_key("POS PURCHASE GRAB 98765 TORONTO"), "Grab")
         self.assertEqual(merchant_key("GRAB A 9EV9JCVGWRXOAV"), "Grab")
         self.assertEqual(merchant_key("GRAB A 9EV9H3PGW8I4AV"), "Grab")
         self.assertEqual(merchant_key("Grab* A-9Ev9Jcvgwrxoav"), "Grab")
         self.assertEqual(merchant_key("Grab* A-9Ev9H3Pgw8I4Av"), "Grab")
+
+    def test_merchant_key_groups_healthy_planet_variations(self):
+        self.assertEqual(merchant_key("Healthy Planet Stockyard"), "Healthy Planet")
+        self.assertEqual(merchant_key("HEALTHYPLANET STOCKYARD TORONTO, ON"), "Healthy Planet")
+        self.assertEqual(merchant_key("Healthly Planet"), "Healthy Planet")
 
     def test_merchant_key_groups_walmart_variations(self):
         self.assertEqual(merchant_key("WALMART STORE #1234"), "Walmart")
@@ -80,6 +86,37 @@ class CategorizationTests(unittest.TestCase):
         self.assertEqual(merchant_key("McDonalds Toronto"), "Mcdonalds")
         self.assertEqual(merchant_key("MCDONALD'S #123"), "Mcdonalds")
         self.assertEqual(merchant_key("MC DONALDS"), "Mcdonalds")
+
+    def test_merchant_key_groups_location_variants(self):
+        self.assertEqual(merchant_key("DARK HORSE ESPRESSO BAR C TORONTO, ON"), "Dark Horse")
+        self.assertEqual(merchant_key("Dark Horse St Clair MISSISSAUGA, ON"), "Dark Horse")
+        self.assertEqual(merchant_key("Dark Horse Spadina MISSISSAUGA, ON"), "Dark Horse")
+        self.assertEqual(merchant_key("THE HOME DEPOT #7013 TORONTO, ON"), "The Home Depot")
+        self.assertEqual(merchant_key("THE HOME DEPOT #7274 NORTH YORK, ON"), "The Home Depot")
+        self.assertEqual(merchant_key("CA WONDERLAND PARKING MAPLE ON"), "Canada's Wonderland")
+        self.assertEqual(merchant_key("CANADA'S WONDERLAND-RESAL MAPLE, ON"), "Canada's Wonderland")
+
+    def test_merchant_key_groups_payment_processor_prefixes(self):
+        self.assertEqual(merchant_key("SQ *JIMMY'S COFFEE Toronto, ON"), "Jimmy's Coffee")
+        self.assertEqual(merchant_key("JIMMY'S COFFEE TORONTO, ON"), "Jimmy's Coffee")
+        self.assertEqual(merchant_key("RITUAL-AROMA ESPRESSO TORONTO, ON"), "Aroma Espresso Bar")
+        self.assertEqual(merchant_key("Aroma Espresso Bar"), "Aroma Espresso Bar")
+        self.assertEqual(merchant_key("TST-Scotty Bons Caribb Toronto"), "Scotty Bons")
+        self.assertEqual(merchant_key("SCOTTY BONS CARIBBEAN GRI TORONTO, ON"), "Scotty Bons")
+        self.assertEqual(merchant_key("SP TRE MARI BAKERY"), "Tre Mari Bakery")
+        self.assertEqual(merchant_key("TRE MARI BAKERY TORONTO"), "Tre Mari Bakery")
+
+    def test_merchant_key_groups_identified_duplicate_chains(self):
+        self.assertEqual(merchant_key("PRIMMUM INSURANCE COMP MONTREAL, QC"), "Primmum Insurance")
+        self.assertEqual(merchant_key("PRIMMUM INSURANCE COMPANY MONTREAL, QC"), "Primmum Insurance")
+        self.assertEqual(merchant_key("GALLERIA EXPRESS TORONTO, ON"), "Galleria Express")
+        self.assertEqual(merchant_key("GALLERIA FRESH EXPRESS TORONTO, ON"), "Galleria Express")
+        self.assertEqual(merchant_key("CANADIAN TIRE #182 TORONTO, ON"), "Canadian Tire")
+        self.assertEqual(merchant_key("CDN TIRE STORE #00600 TORONTO, ON"), "Canadian Tire")
+        self.assertEqual(merchant_key("UBER CANADA/UBEREATS TORONTO, ON"), "Uber Eats")
+        self.assertEqual(merchant_key("UBER* EATS HELP.UBER.COM, ON"), "Uber Eats")
+        self.assertEqual(merchant_key("SNAKES & LATTES ANNEX TORONTO, ON"), "Snakes & Lattes")
+        self.assertEqual(merchant_key("TST-Snakes Lattes An Toronto, ON"), "Snakes & Lattes")
 
     def test_build_merchant_groups_orders_by_frequency(self):
         groups = build_merchant_groups(

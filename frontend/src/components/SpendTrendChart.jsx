@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 
+import { getChartTheme } from '../utils/chartTheme';
 import { formatCurrency } from '../utils/currency';
 import { escapeHtml, renderCategoryTransactionGroups, renderTransactionGroups } from '../utils/chartTooltip';
 
@@ -37,10 +38,12 @@ export function SpendTrendChart({ weeklyBreakdown }) {
 
   const option = useMemo(() => {
     const weeks = weeklyBreakdown || [];
+    const theme = getChartTheme();
 
     return {
       animationDuration: 420,
-      color: ['#5fa68e'],
+      textStyle: { fontFamily: theme.font },
+      color: [theme.palette[0]],
       grid: {
         top: 24,
         right: 22,
@@ -68,12 +71,12 @@ export function SpendTrendChart({ weeklyBreakdown }) {
           );
           return [x, y];
         },
-        backgroundColor: '#172026',
+        backgroundColor: theme.text,
         borderWidth: 0,
         extraCssText: 'max-width: min(520px, calc(100vw - 32px)); max-height: min(420px, calc(100vh - 48px)); overflow-y: auto; white-space: normal;',
         textStyle: {
           color: '#ffffff',
-          fontFamily: 'Inter, system-ui, sans-serif',
+          fontFamily: theme.font,
         },
         formatter: renderTooltip,
       },
@@ -84,26 +87,26 @@ export function SpendTrendChart({ weeklyBreakdown }) {
           alignWithLabel: true,
         },
         axisLabel: {
-          color: '#34444b',
-          fontWeight: 800,
+          color: theme.text,
+          fontWeight: 600,
           interval: 0,
           rotate: weeks.length > 8 ? 35 : 0,
         },
         axisLine: {
           lineStyle: {
-            color: '#9aa8a8',
+            color: theme.border,
           },
         },
       },
       yAxis: {
         type: 'value',
         axisLabel: {
-          color: '#68767a',
+          color: theme.muted,
           formatter: (value) => formatCurrency(value),
         },
         splitLine: {
           lineStyle: {
-            color: '#e1e8e6',
+            color: theme.border,
           },
         },
       },
@@ -121,9 +124,9 @@ export function SpendTrendChart({ weeklyBreakdown }) {
           },
           emphasis: {
             itemStyle: {
-              color: '#d96c4a',
-              shadowBlur: 12,
-              shadowColor: 'rgba(217, 108, 74, 0.32)',
+              color: theme.hover,
+              shadowBlur: 0,
+              shadowColor: theme.hover,
             },
           },
         },
